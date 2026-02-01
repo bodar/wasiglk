@@ -5,7 +5,7 @@
     This file is copyright 1998-2025 by Andrew Plotkin. It is
     distributed under the MIT license; see the "LICENSE" file.
 
-    WASI-compatible version for Emglken
+    WASI-compatible version for wasiglk
 */
 
 #ifndef GLK_H
