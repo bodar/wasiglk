@@ -12,6 +12,8 @@ The interpreters use a Glk implementation (`src/wasi_glk.zig`) that communicates
 
 Requires [Zig 0.15+](https://ziglang.org/).
 
+The Git interpreter additionally requires [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) for its precompiled `libsetjmp.a` (setjmp/longjmp support via WASM exception handling). Install via [mise](https://mise.jdx.dev/): `mise install wasi-sdk@27` or set `WASI_SDK_PATH` to your wasi-sdk installation.
+
 ```bash
 # Build all interpreters
 zig build -Doptimize=ReleaseSmall
@@ -29,7 +31,7 @@ ls zig-out/bin/*.wasm
 |------|----------|--------|---------|--------|
 | [Glulxe](https://github.com/erkyrath/glulxe) | C | Glulx (.ulx, .gblorb) | MIT | Working |
 | [Hugo](https://github.com/hugoif/hugo-unix) | C | Hugo (.hex) | BSD-2-Clause | Working |
-| [Git](https://github.com/DavidKinder/Git) | C | Glulx | MIT | Needs setjmp support |
+| [Git](https://github.com/DavidKinder/Git) | C | Glulx | MIT | Working (requires wasi-sdk) |
 | [Bocfel](https://github.com/garglk/garglk) | C++ | Z-machine (.z3-.z8) | MIT | Needs fstream support |
 
 ## Browser Usage with JSPI

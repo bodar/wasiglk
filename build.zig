@@ -24,11 +24,10 @@ pub fn build(b: *std.Build) void {
     const wasi_glk = buildWasiGlk(b, target, optimize);
 
     // Build all interpreters
-    // Note: git requires setjmp (needs WASM exception handling)
     // Note: bocfel requires fstream (not available in WASI libc++)
     const interpreters = .{
         .{ "glulxe", "Build Glulxe interpreter", buildGlulxe },
-        // .{ "git", "Build Git interpreter", buildGit },
+        .{ "git", "Build Git interpreter", buildGit },
         .{ "hugo", "Build Hugo interpreter", buildHugo },
         // .{ "bocfel", "Build Bocfel interpreter", buildBocfel },
     };
@@ -82,9 +81,20 @@ fn buildGlulxe(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 }
 
 fn buildGit(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, wasi_glk: *std.Build.Step.Compile) *std.Build.Step.Compile {
+    // Git requires setjmp/longjmp which needs WASM exception handling.
+    // Create a target with exception_handling CPU feature enabled.
+    const git_target = if (target.result.cpu.arch == .wasm32)
+        b.resolveTargetQuery(.{
+            .cpu_arch = .wasm32,
+            .os_tag = .wasi,
+            .cpu_features_add = std.Target.wasm.featureSet(&.{.exception_handling}),
+        })
+    else
+        target;
+
     const exe = b.addExecutable(.{
         .name = "git",
-        .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+        .root_module = b.createModule(.{ .target = git_target, .optimize = optimize }),
     });
 
     exe.addCSourceFiles(.{
@@ -96,12 +106,43 @@ fn buildGit(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.built
             "search.c",   "terp.c",     "git_unix.c",
         },
         .flags = &.{
-            "-DUSE_DIRECT_THREADING", "-DUSE_INLINE",
-            "-Wall",                  "-Wno-int-conversion",
-            "-Wno-pointer-sign",      "-Wno-unused-but-set-variable",
+            "-DUSE_DIRECT_THREADING",    "-DUSE_INLINE",
+            "-Wall",                     "-Wno-int-conversion",
+            "-Wno-pointer-sign",         "-Wno-unused-but-set-variable",
             "-D_WASI_EMULATED_SIGNAL",
+            // Enable setjmp/longjmp via WASM exception handling
+            "-mllvm",                    "-wasm-enable-sjlj",
+            "-mllvm",                    "-wasm-use-legacy-eh=false",
         },
     });
+
+    // Add git-specific compatibility shims
+    exe.addCSourceFiles(.{
+        .root = b.path("src"),
+        .files = &.{"git_compat.c"},
+        .flags = &.{"-D_WASI_EMULATED_SIGNAL"},
+    });
+
+    // Link precompiled libsetjmp from wasi-sdk (required for setjmp/longjmp support).
+    // The runtime can't be compiled with current LLVM due to a bug with __builtin_wasm_throw.
+    // See: https://github.com/llvm/llvm-project - "undefined tag symbol cannot be weak"
+    if (git_target.result.cpu.arch == .wasm32) {
+        // Try to find wasi-sdk's libsetjmp.a via environment or common paths
+        const wasi_sdk_path = std.process.getEnvVarOwned(b.allocator, "WASI_SDK_PATH") catch |err| blk: {
+            if (err == error.EnvironmentVariableNotFound) {
+                // Try mise's default location
+                const home = std.process.getEnvVarOwned(b.allocator, "HOME") catch break :blk null;
+                break :blk std.fmt.allocPrint(b.allocator, "{s}/.local/share/mise/installs/wasi-sdk/27/wasi-sdk", .{home}) catch null;
+            }
+            break :blk null;
+        };
+        if (wasi_sdk_path) |sdk_path| {
+            const libsetjmp_path = std.fmt.allocPrint(b.allocator, "{s}/share/wasi-sysroot/lib/wasm32-wasi/libsetjmp.a", .{sdk_path}) catch null;
+            if (libsetjmp_path) |path| {
+                exe.addObjectFile(.{ .cwd_relative = path });
+            }
+        }
+    }
 
     addGlkSupport(exe, b, wasi_glk, true);
     exe.addIncludePath(b.path("git"));
