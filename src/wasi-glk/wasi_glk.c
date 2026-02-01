@@ -111,6 +111,9 @@ static int tables_initialized = 0;
 static char json_buffer[65536];
 static int json_pos = 0;
 
+/* Forward declarations */
+static void gli_flush_text_buffer(void);
+
 /* ============== JSON output helpers ============== */
 
 static void json_reset(void) {
@@ -177,6 +180,7 @@ static void gli_initialize_tables(void) {
 /* ============== Core functions ============== */
 
 void glk_exit(void) {
+    gli_flush_text_buffer();
     json_reset();
     json_append("{\"type\":\"exit\"}");
     json_flush();
@@ -396,6 +400,7 @@ winid_t glk_window_get_sibling(winid_t win) {
 
 void glk_window_clear(winid_t win) {
     if (!win) return;
+    gli_flush_text_buffer();
     json_reset();
     json_append("{\"type\":\"update\",\"content\":[{\"id\":%u,\"op\":\"clear\"}]}", win->id);
     json_flush();
@@ -553,7 +558,8 @@ void glk_stream_set_position(strid_t str, glsi32 pos, glui32 seekmode) {
     if (str->type == 2 && str->file) {
         int whence = (seekmode == seekmode_Current) ? SEEK_CUR :
                      (seekmode == seekmode_End) ? SEEK_END : SEEK_SET;
-        fseek(str->file, pos, whence);
+        int result = fseek(str->file, pos, whence);
+
     } else if (str->type == 1) {
         if (seekmode == seekmode_Current) str->bufptr += pos;
         else if (seekmode == seekmode_End) str->bufptr = str->buflen + pos;
@@ -567,7 +573,9 @@ glui32 glk_stream_get_position(strid_t str) {
     if (!str) return 0;
 
     if (str->type == 2 && str->file) {
-        return ftell(str->file);
+        long pos = ftell(str->file);
+
+        return pos;
     } else if (str->type == 1) {
         return str->bufptr;
     }
@@ -584,19 +592,44 @@ strid_t glk_stream_get_current(void) {
 
 /* ============== Output functions ============== */
 
+/* Text output buffer for batching window output */
+#define TEXT_BUFFER_SIZE 8192
+static char gli_text_buffer[TEXT_BUFFER_SIZE];
+static int gli_text_buffer_len = 0;
+static winid_t gli_text_buffer_win = NULL;
+
+static void gli_flush_text_buffer(void) {
+    if (gli_text_buffer_len > 0 && gli_text_buffer_win) {
+        gli_text_buffer[gli_text_buffer_len] = '\0';
+        json_reset();
+        json_append("{\"type\":\"update\",\"content\":[{\"id\":%u,\"text\":", gli_text_buffer_win->id);
+        json_append_escaped_string(gli_text_buffer);
+        json_append("}]}");
+        json_flush();
+        gli_text_buffer_len = 0;
+    }
+}
+
 static void gli_put_char_to_stream(strid_t str, unsigned char ch) {
     if (!str || !str->writable) return;
 
     str->writecount++;
 
     if (str->type == 0 && str->win) {
-        /* Window stream - output as JSON */
-        char buf[2] = { ch, 0 };
-        json_reset();
-        json_append("{\"type\":\"update\",\"content\":[{\"id\":%u,\"text\":", str->win->id);
-        json_append_escaped_string(buf);
-        json_append("}]}");
-        json_flush();
+        /* Window stream - buffer text output */
+        /* If switching windows, flush the old buffer first */
+        if (gli_text_buffer_win != str->win) {
+            gli_flush_text_buffer();
+            gli_text_buffer_win = str->win;
+        }
+        /* Add to buffer */
+        if (gli_text_buffer_len < TEXT_BUFFER_SIZE - 1) {
+            gli_text_buffer[gli_text_buffer_len++] = ch;
+        } else {
+            /* Buffer full, flush it */
+            gli_flush_text_buffer();
+            gli_text_buffer[gli_text_buffer_len++] = ch;
+        }
     } else if (str->type == 1 && str->buf) {
         /* Memory stream */
         if (str->bufptr < str->buflen) {
@@ -617,6 +650,7 @@ void glk_put_char_stream(strid_t str, unsigned char ch) {
 }
 
 void glk_put_string(char *s) {
+
     glk_put_string_stream(gli_currentstr, s);
 }
 
@@ -626,6 +660,7 @@ void glk_put_string_stream(strid_t str, char *s) {
 }
 
 void glk_put_buffer(char *buf, glui32 len) {
+
     glk_put_buffer_stream(gli_currentstr, buf, len);
 }
 
@@ -806,6 +841,9 @@ glui32 glk_fileref_does_file_exist(frefid_t fref) {
 
 void glk_select(event_t *event) {
     if (!event) return;
+
+    /* Flush any pending text output before waiting for input */
+    gli_flush_text_buffer();
 
     event->type = evtype_None;
     event->win = NULL;
@@ -1271,10 +1309,237 @@ strid_t glk_stream_open_resource_uni(glui32 filenum, glui32 rock) {
 }
 #endif
 
+/* ============== Image stubs (not supported in WASI) ============== */
+
+glui32 glk_image_get_info(glui32 image, glui32 *width, glui32 *height) {
+    if (width) *width = 0;
+    if (height) *height = 0;
+    return 0;
+}
+
+glui32 glk_image_draw(winid_t win, glui32 image, glsi32 val1, glsi32 val2) {
+    return 0;
+}
+
+glui32 glk_image_draw_scaled(winid_t win, glui32 image, glsi32 val1, glsi32 val2,
+    glui32 width, glui32 height) {
+    return 0;
+}
+
+glui32 glk_image_draw_scaled_ext(winid_t win, glui32 image, glsi32 val1, glsi32 val2,
+    glui32 width, glui32 height, glui32 flags) {
+    return 0;
+}
+
+void glk_window_flow_break(winid_t win) {
+    /* Stub */
+}
+
+void glk_window_erase_rect(winid_t win, glsi32 left, glsi32 top,
+    glui32 width, glui32 height) {
+    /* Stub */
+}
+
+void glk_window_fill_rect(winid_t win, glui32 color, glsi32 left, glsi32 top,
+    glui32 width, glui32 height) {
+    /* Stub */
+}
+
+void glk_window_set_background_color(winid_t win, glui32 color) {
+    /* Stub */
+}
+
+/* ============== Sound channel stubs (not supported in WASI) ============== */
+
+schanid_t glk_schannel_iterate(schanid_t chan, glui32 *rockptr) {
+    if (rockptr) *rockptr = 0;
+    return NULL;
+}
+
+glui32 glk_schannel_get_rock(schanid_t chan) {
+    return 0;
+}
+
+schanid_t glk_schannel_create(glui32 rock) {
+    return NULL;
+}
+
+schanid_t glk_schannel_create_ext(glui32 rock, glui32 volume) {
+    return NULL;
+}
+
+void glk_schannel_destroy(schanid_t chan) {
+    /* Stub */
+}
+
+glui32 glk_schannel_play(schanid_t chan, glui32 snd) {
+    return 0;
+}
+
+glui32 glk_schannel_play_ext(schanid_t chan, glui32 snd, glui32 repeats, glui32 notify) {
+    return 0;
+}
+
+glui32 glk_schannel_play_multi(schanid_t *chanarray, glui32 chancount,
+    glui32 *sndarray, glui32 soundcount, glui32 notify) {
+    return 0;
+}
+
+void glk_schannel_stop(schanid_t chan) {
+    /* Stub */
+}
+
+void glk_schannel_set_volume(schanid_t chan, glui32 vol) {
+    /* Stub */
+}
+
+void glk_schannel_set_volume_ext(schanid_t chan, glui32 vol, glui32 duration, glui32 notify) {
+    /* Stub */
+}
+
+void glk_schannel_pause(schanid_t chan) {
+    /* Stub */
+}
+
+void glk_schannel_unpause(schanid_t chan) {
+    /* Stub */
+}
+
+void glk_sound_load_hint(glui32 snd, glui32 flag) {
+    /* Stub */
+}
+
+/* ============== Dispatch registry stubs ============== */
+
+#include "gi_dispa.h"
+
+static gidispatch_rock_t (*gli_register_obj)(void *obj, glui32 objclass) = NULL;
+static void (*gli_unregister_obj)(void *obj, glui32 objclass, gidispatch_rock_t objrock) = NULL;
+static gidispatch_rock_t (*gli_register_arr)(void *array, glui32 len, char *typecode) = NULL;
+static void (*gli_unregister_arr)(void *array, glui32 len, char *typecode, gidispatch_rock_t objrock) = NULL;
+
+void gidispatch_set_object_registry(
+    gidispatch_rock_t (*regi)(void *obj, glui32 objclass),
+    void (*unregi)(void *obj, glui32 objclass, gidispatch_rock_t objrock)) {
+    gli_register_obj = regi;
+    gli_unregister_obj = unregi;
+}
+
+void gidispatch_set_retained_registry(
+    gidispatch_rock_t (*regi)(void *array, glui32 len, char *typecode),
+    void (*unregi)(void *array, glui32 len, char *typecode, gidispatch_rock_t objrock)) {
+    gli_register_arr = regi;
+    gli_unregister_arr = unregi;
+}
+
+gidispatch_rock_t gidispatch_get_objrock(void *obj, glui32 objclass) {
+    gidispatch_rock_t rock;
+    rock.num = 0;
+    return rock;
+}
+
+void gidispatch_set_autorestore_registry(
+    long (*locatearr)(void *array, glui32 len, char *typecode,
+        gidispatch_rock_t objrock, int *elemsizeref),
+    gidispatch_rock_t (*restorearr)(long bufkey, glui32 len,
+        char *typecode, void **arrayref)) {
+    /* Stub - autorestore not supported in WASI version */
+}
+
+/* ============== Garglk extension stubs ============== */
+
+void garglk_set_zcolors(glui32 fg, glui32 bg) {
+    /* Stub */
+}
+
+void garglk_set_zcolors_stream(strid_t str, glui32 fg, glui32 bg) {
+    /* Stub */
+}
+
+void garglk_set_reversevideo(glui32 reverse) {
+    /* Stub */
+}
+
+void garglk_set_reversevideo_stream(strid_t str, glui32 reverse) {
+    /* Stub */
+}
+
+/* ============== Blorb resource map stubs ============== */
+
+#include "gi_blorb.h"
+
+static giblorb_map_t *gli_blorb_map = NULL;
+
+giblorb_err_t giblorb_set_resource_map(strid_t file) {
+    /* Basic blorb support - just remember we have a blorb file */
+    if (gli_blorb_map) {
+        giblorb_destroy_map(gli_blorb_map);
+        gli_blorb_map = NULL;
+    }
+
+    if (!file) return giblorb_err_None;
+
+    giblorb_err_t err = giblorb_create_map(file, &gli_blorb_map);
+    return err;
+}
+
+giblorb_map_t *giblorb_get_resource_map(void) {
+    return gli_blorb_map;
+}
+
+/* ============== Glkunix startup functions ============== */
+
+#include "glkstart.h"
+
+static char *gli_workdir = NULL;
+
+void glkunix_set_base_file(char *filename) {
+    /* Extract directory from filename for relative file operations */
+    if (!filename) return;
+
+    if (gli_workdir) free(gli_workdir);
+    gli_workdir = strdup(filename);
+
+    /* Find last slash and truncate */
+    char *slash = strrchr(gli_workdir, '/');
+    if (slash) {
+        *slash = '\0';
+    } else {
+        free(gli_workdir);
+        gli_workdir = strdup(".");
+    }
+}
+
+strid_t glkunix_stream_open_pathname_gen(char *pathname, glui32 writemode,
+    glui32 textmode, glui32 rock) {
+
+    if (!pathname) return NULL;
+
+    frefid_t fref = glk_fileref_create_by_name(
+        (textmode ? fileusage_TextMode : fileusage_BinaryMode) | fileusage_Data,
+        pathname, 0);
+    if (!fref) return NULL;
+
+    glui32 fmode = writemode ? filemode_Write : filemode_Read;
+    strid_t str = glk_stream_open_file(fref, fmode, rock);
+    glk_fileref_destroy(fref);
+
+    return str;
+}
+
+strid_t glkunix_stream_open_pathname(char *pathname, glui32 textmode, glui32 rock) {
+    return glkunix_stream_open_pathname_gen(pathname, 0, textmode, rock);
+}
+
 /* ============== Main entry point wrapper ============== */
 
-/* The interpreter defines glk_main(). We provide main() which sets up
-   the Glk environment and calls glk_main(). */
+/* The interpreter defines glk_main() and glkunix_startup_code().
+   We provide main() which sets up the Glk environment, calls the
+   startup code with arguments, and then calls glk_main(). */
+
+/* These are declared in glkstart.h but defined by the interpreter */
+extern glkunix_argumentlist_t glkunix_arguments[];
+extern int glkunix_startup_code(glkunix_startup_t *data);
 
 int main(int argc, char **argv) {
     gli_initialize_tables();
@@ -1284,7 +1549,22 @@ int main(int argc, char **argv) {
     json_append("{\"type\":\"init\",\"version\":\"0.7.6\",\"support\":[\"unicode\",\"hyperlinks\",\"datetime\"]}");
     json_flush();
 
+    /* Call the interpreter's startup code with command line arguments */
+    glkunix_startup_t startdata;
+    startdata.argc = argc;
+    startdata.argv = argv;
+
+    if (!glkunix_startup_code(&startdata)) {
+        /* Startup failed */
+        json_reset();
+        json_append("{\"type\":\"error\",\"message\":\"Startup failed\"}");
+        json_flush();
+        return 1;
+    }
+
+
     glk_main();
+
 
     glk_exit();
     return 0;

@@ -8,7 +8,7 @@ The traditional Emglken build uses Emscripten to compile C/C++ code to WebAssemb
 
 ## Requirements
 
-- **Zig 0.13.0 or later**: https://ziglang.org/download/
+- **Zig 0.15.0 or later**: https://ziglang.org/download/
 - **Git submodules initialized**: The interpreter source code is in submodules
 
 ## Quick Start
@@ -28,13 +28,19 @@ ls zig-out/bin/*.wasm
 
 ## Available Interpreters
 
-| Interpreter | Format | Description |
-|-------------|--------|-------------|
-| `glulxe.wasm` | Glulx (.ulx, .gblorb) | Reference Glulx implementation |
-| `git.wasm` | Glulx (.ulx, .gblorb) | Optimized Glulx implementation |
-| `hugo.wasm` | Hugo (.hex) | Hugo IF interpreter |
-| `bocfel.wasm` | Z-machine (.z3-.z8, .zblorb) | Z-machine interpreter |
-| `scare.wasm` | ADRIFT (.taf) | SCARE interpreter for ADRIFT games |
+| Interpreter | Format | Description | Status |
+|-------------|--------|-------------|--------|
+| `glulxe.wasm` | Glulx (.ulx, .gblorb) | Reference Glulx implementation | ✅ Working |
+| `hugo.wasm` | Hugo (.hex) | Hugo IF interpreter | ✅ Working |
+| `git.wasm` | Glulx (.ulx, .gblorb) | Optimized Glulx implementation | ⚠️ Needs setjmp/longjmp |
+| `bocfel.wasm` | Z-machine (.z3-.z8, .zblorb) | Z-machine interpreter | ⚠️ Needs C++ fstream |
+| `scare.wasm` | ADRIFT (.taf) | SCARE interpreter for ADRIFT games | ⚠️ Needs setjmp/longjmp + zlib |
+
+### Build Status Notes
+
+- **Glulxe and Hugo** build successfully and produce working WASM binaries
+- **Git and Scare** use setjmp/longjmp which requires WASM exception handling (not yet standardized in WASI)
+- **Bocfel** requires C++ fstream support which is limited in WASI's libc++
 
 ## Build Options
 
