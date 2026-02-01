@@ -2,6 +2,7 @@ build
 node_modules
 target
 tests/regtest.py
+test-results/
 .idea/
 .zig-cache/
 zig-out/
