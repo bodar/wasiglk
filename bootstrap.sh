@@ -18,6 +18,7 @@ function http() {
 if [[ ! -f "$MISE_INSTALL_PATH" ]]; then
   http https://mise.run | sh
 fi
+mise plugins install wasi-sdk https://github.com/mise-plugins/mise-wasi-sdk.git 2>/dev/null || true
 mise install
 eval "$(mise env)"
 
