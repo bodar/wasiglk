@@ -32,17 +32,20 @@ ls zig-out/bin/*.wasm
 | [Glulxe](https://github.com/erkyrath/glulxe) | C | Glulx (.ulx, .gblorb) | MIT | ✅ | ✅ |
 | [Hugo](https://github.com/hugoif/hugo-unix) | C | Hugo (.hex) | BSD-2-Clause | ✅ | ✅ |
 | [Git](https://github.com/DavidKinder/Git) | C | Glulx | MIT | ✅ (requires wasi-sdk) | ✅ |
-| [Bocfel](https://github.com/garglk/garglk) | C++ | Z-machine (.z3-.z8) | MIT | ❌ (see below) | ✅ |
+| [Bocfel](https://github.com/garglk/garglk) | C++ | Z-machine (.z3-.z8) | MIT | ❌ (C++ exceptions) | ✅ |
+| [Scare](https://github.com/garglk/garglk) | C | ADRIFT (.taf) | GPL-2.0 | ❌ (needs zlib) | ✅ |
+| [TADS](https://github.com/garglk/garglk) | C/C++ | TADS 2/3 (.gam, .t3) | GPL-2.0 | ❌ (C++ exceptions) | ✅ |
 
-### Bocfel WASM Status
+### Native-Only Interpreters
 
-Bocfel is a C++ interpreter that uses exceptions for control flow (restart, quit, restore operations). WASM builds are currently blocked because wasi-sdk doesn't ship `libc++`/`libc++abi` compiled with C++ exception support.
+**Bocfel and TADS** are C++ interpreters that use exceptions for control flow. WASM builds are blocked because wasi-sdk doesn't ship `libc++`/`libc++abi` with C++ exception support.
 
-**What's needed for WASM support:**
+**Scare** requires zlib for TAF file decompression. WASM builds are blocked because wasi-sdk doesn't include zlib. Could be enabled by bundling zlib source.
+
+**What's needed for C++ WASM support:**
 - wasi-sdk built with `LIBCXX_ENABLE_EXCEPTIONS=ON`, `LIBCXXABI_ENABLE_EXCEPTIONS=ON`, and `libunwind`
 - Compile flags: `-fwasm-exceptions -mllvm -wasm-use-legacy-eh=false`
 - Link flags: `-lunwind`
-- Additionally needs fstream stubs (bocfel uses `std::ifstream` for optional config/patch files)
 
 **Tracking:**
 - [wasi-sdk#565](https://github.com/WebAssembly/wasi-sdk/issues/565) - C++ exception support tracking issue
@@ -91,4 +94,4 @@ wasiglk/
 
 MIT. See [LICENSE](LICENSE) for details.
 
-Individual interpreters retain their original licenses (MIT or BSD-2-Clause).
+Individual interpreters retain their original licenses (MIT, BSD-2-Clause, or GPL-2.0).

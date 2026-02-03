@@ -37,16 +37,25 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&install.step);
     }
 
-    // Bocfel (C++) - native only for now
-    // WASM builds blocked by: wasi-sdk doesn't ship libc++/libc++abi with C++ exception support.
-    // Bocfel uses exceptions for control flow (restart, quit, restore) - cannot compile with -fno-exceptions.
-    // Tracking: https://github.com/WebAssembly/wasi-sdk/issues/565
-    // Workaround: https://gist.github.com/yerzham/302efcec6a2e82c1e8de4aed576ea29d
+    // Native-only interpreters
+    // - Bocfel/TADS: WASM blocked by wasi-sdk lacking C++ exception support
+    //   Tracking: https://github.com/WebAssembly/wasi-sdk/issues/565
+    // - Scare: WASM blocked by zlib dependency (wasi-sdk doesn't include zlib)
     if (is_native) {
         const bocfel = buildBocfel(b, target, optimize, wasi_glk);
         const bocfel_install = b.addInstallArtifact(bocfel, .{});
         b.step("bocfel", "Build Bocfel interpreter (native only)").dependOn(&bocfel_install.step);
         b.getInstallStep().dependOn(&bocfel_install.step);
+
+        const tads = buildTads(b, target, optimize, wasi_glk);
+        const tads_install = b.addInstallArtifact(tads, .{});
+        b.step("tads", "Build TADS 2/3 interpreter (native only)").dependOn(&tads_install.step);
+        b.getInstallStep().dependOn(&tads_install.step);
+
+        const scare = buildScare(b, target, optimize, wasi_glk);
+        const scare_install = b.addInstallArtifact(scare, .{});
+        b.step("scare", "Build Scare interpreter (native only)").dependOn(&scare_install.step);
+        b.getInstallStep().dependOn(&scare_install.step);
     }
 }
 
@@ -196,6 +205,40 @@ fn buildHugo(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     return exe;
 }
 
+fn buildScare(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, wasi_glk: *std.Build.Step.Compile) *std.Build.Step.Compile {
+    const exe = b.addExecutable(.{
+        .name = "scare",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+    });
+
+    const scare_flags: []const []const u8 = &.{
+        "-Wall",
+        "-Wno-pointer-sign",
+        "-D_WASI_EMULATED_SIGNAL",
+        "-DSCARE_NO_ABBREVIATIONS",
+    };
+
+    // Core SCARE interpreter files
+    exe.addCSourceFiles(.{
+        .root = b.path("garglk/terps/scare"),
+        .files = &.{
+            "sctafpar.c",  "sctaffil.c", "scprops.c",  "scvars.c",
+            "scexpr.c",    "scprintf.c", "scinterf.c", "scparser.c",
+            "sclibrar.c",  "scrunner.c", "scevents.c", "scnpcs.c",
+            "scobjcts.c",  "sctasks.c",  "screstrs.c", "scgamest.c",
+            "scserial.c",  "scresour.c", "scmemos.c",  "scutils.c",
+            "sclocale.c",  "scdebug.c",  "os_glk.c",
+        },
+        .flags = scare_flags,
+    });
+
+    addGlkSupport(exe, b, wasi_glk, false);
+    exe.addIncludePath(b.path("garglk/terps/scare"));
+    exe.linkSystemLibrary("z"); // zlib for TAF decompression
+
+    return exe;
+}
+
 fn buildBocfel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, wasi_glk: *std.Build.Step.Compile) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
         .name = "bocfel",
@@ -230,6 +273,119 @@ fn buildBocfel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 
     addGlkSupport(exe, b, wasi_glk, false);
     exe.addIncludePath(b.path("garglk/terps/bocfel"));
+    exe.linkLibCpp();
+
+    return exe;
+}
+
+fn buildTads(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, wasi_glk: *std.Build.Step.Compile) *std.Build.Step.Compile {
+    const exe = b.addExecutable(.{
+        .name = "tads",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+    });
+
+    const tads_c_flags: []const []const u8 = &.{
+        "-DGLK",
+        "-DGLK_TIMERS",
+        "-DGLK_UNICODE",
+        "-DTC_TARGET_T3",
+        "-DRUNTIME",
+        "-DVMGLOB_STRUCT",
+        "-Wall",
+        "-Wno-pointer-sign",
+        "-Wno-parentheses",
+    };
+
+    const tads_cpp_flags: []const []const u8 = &.{
+        "-DGLK",
+        "-DGLK_TIMERS",
+        "-DGLK_UNICODE",
+        "-DTC_TARGET_T3",
+        "-DRUNTIME",
+        "-DVMGLOB_STRUCT",
+        "-Wall",
+        "-std=c++11",
+        "-Wno-deprecated-register",
+        "-Wno-logical-not-parentheses",
+        "-Wno-pointer-sign",
+        "-Wno-string-concatenation",
+    };
+
+    // TADS Glk interface layer (mixed C and C++)
+    exe.addCSourceFiles(.{
+        .root = b.path("garglk/terps/tads/glk"),
+        .files = &.{
+            "memicmp.c",  "osbuffer.c", "osextra.c",  "osglk.c",
+            "osglkban.c", "osmisc.c",   "osparse.c",  "t2askf.c",
+            "t2indlg.c",
+        },
+        .flags = tads_c_flags,
+    });
+
+    exe.addCSourceFiles(.{
+        .root = b.path("garglk/terps/tads/glk"),
+        .files = &.{
+            "osportable.cc", "t23run.cpp", "t3askf.cpp",
+            "t3indlg.cpp",   "vmuni_cs.cpp",
+        },
+        .flags = tads_cpp_flags,
+    });
+
+    // TADS 2 runtime (C)
+    exe.addCSourceFiles(.{
+        .root = b.path("garglk/terps/tads/tads2"),
+        .files = &.{
+            "argize.c",   "bif.c",      "bifgdum.c",  "cmap.c",
+            "cmd.c",      "dat.c",      "dbgtr.c",    "errmsg.c",
+            "execmd.c",   "fio.c",      "fioxor.c",   "getstr.c",
+            "ler.c",      "linfdum.c",  "lst.c",      "mch.c",
+            "mcm.c",      "mcs.c",      "obj.c",      "oem.c",
+            "os0.c",      "oserr.c",    "osifc.c",    "osnoui.c",
+            "osrestad.c", "osstzprs.c", "ostzposix.c", "out.c",
+            "output.c",   "ply.c",      "qas.c",      "regex.c",
+            "run.c",      "runstat.c",  "suprun.c",   "trd.c",
+            "voc.c",      "vocab.c",
+        },
+        .flags = tads_c_flags,
+    });
+
+    // TADS 3 VM (C++)
+    exe.addCSourceFiles(.{
+        .root = b.path("garglk/terps/tads/tads3"),
+        .files = &.{
+            "charmap.cpp",     "md5.cpp",         "resldexe.cpp",    "resload.cpp",
+            "sha2.cpp",        "std.cpp",         "tcerr.cpp",       "tcerrmsg.cpp",
+            "tcgen.cpp",       "tcglob.cpp",      "tcmain.cpp",      "tcprs.cpp",
+            "tcprs_rt.cpp",    "tcprsnf.cpp",     "tcprsnl.cpp",     "tcprsstm.cpp",
+            "tcsrc.cpp",       "tct3.cpp",        "tct3_d.cpp",      "tct3nl.cpp",
+            "tct3stm.cpp",     "tct3unas.cpp",    "tctok.cpp",       "utf8.cpp",
+            "vmanonfn.cpp",    "vmbif.cpp",       "vmbifl.cpp",      "vmbifreg.cpp",
+            "vmbift3.cpp",     "vmbiftad.cpp",    "vmbiftio.cpp",    "vmbignum.cpp",
+            "vmbignumlib.cpp", "vmbt3_nd.cpp",    "vmbytarr.cpp",    "vmcfgmem.cpp",
+            "vmcoll.cpp",      "vmconhmp.cpp",    "vmconsol.cpp",    "vmcrc.cpp",
+            "vmcset.cpp",      "vmdate.cpp",      "vmdict.cpp",      "vmdynfunc.cpp",
+            "vmerr.cpp",       "vmerrmsg.cpp",    "vmfile.cpp",      "vmfilnam.cpp",
+            "vmfilobj.cpp",    "vmfref.cpp",      "vmfunc.cpp",      "vmglob.cpp",
+            "vmgram.cpp",      "vmhash.cpp",      "vmhostsi.cpp",    "vmhosttx.cpp",
+            "vmimage.cpp",     "vmimg_nd.cpp",    "vmini_nd.cpp",    "vminit.cpp",
+            "vminitim.cpp",    "vmintcls.cpp",    "vmisaac.cpp",     "vmiter.cpp",
+            "vmlog.cpp",       "vmlookup.cpp",    "vmlst.cpp",       "vmmain.cpp",
+            "vmmcreg.cpp",     "vmmeta.cpp",      "vmnetfillcl.cpp", "vmobj.cpp",
+            "vmop.cpp",        "vmpack.cpp",      "vmpat.cpp",       "vmpool.cpp",
+            "vmpoolim.cpp",    "vmregex.cpp",     "vmrun.cpp",       "vmrunsym.cpp",
+            "vmsa.cpp",        "vmsave.cpp",      "vmsort.cpp",      "vmsortv.cpp",
+            "vmsrcf.cpp",      "vmstack.cpp",     "vmstr.cpp",       "vmstrbuf.cpp",
+            "vmstrcmp.cpp",    "vmtmpfil.cpp",    "vmtobj.cpp",      "vmtype.cpp",
+            "vmtypedh.cpp",    "vmtz.cpp",        "vmtzobj.cpp",     "vmundo.cpp",
+            "vmvec.cpp",       "vmconnom.cpp",
+        },
+        .flags = tads_cpp_flags,
+    });
+
+    addGlkSupport(exe, b, wasi_glk, false);
+    exe.addIncludePath(b.path("garglk/terps/tads/glk"));
+    exe.addIncludePath(b.path("garglk/terps/tads/tads2"));
+    exe.addIncludePath(b.path("garglk/terps/tads/tads3"));
     exe.linkLibCpp();
 
     return exe;
