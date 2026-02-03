@@ -1,5 +1,14 @@
 # Project Guidelines
 
+## Getting Started
+
+- **Check README.md** for project structure, architecture, and overview
+- **Use `./run`** for all common tasks - it auto-installs required tools (Zig, Bun, wasi-sdk):
+  - `./run build` - Build all interpreters
+  - `./run test` - Run tests
+  - `./run serve` - Start dev server (check if already running on the port first)
+  - `./run typecheck` - Type check TypeScript
+
 ## Submodules
 
 - **Never modify submodule source code** unless it's temporary for testing purposes
