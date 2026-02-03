@@ -1,10 +1,19 @@
 # wasiglk
 
-Interactive Fiction interpreters compiled to WebAssembly (WASI) using Zig.
+**Work in Progress** - Interactive Fiction interpreters compiled to WebAssembly (WASI) using Zig.
 
 ## Overview
 
-wasiglk compiles IF interpreters to WebAssembly with WASI, enabling them to run in browsers using [JSPI (JavaScript Promise Integration)](https://github.com/aspect-labs/aspect-engineering/blob/main/aspect-blog/2024-10-16-async-wasm.md) or in any WASI-compatible runtime.
+wasiglk is inspired by [emglken](https://github.com/curiousdannii/emglken), which compiles IF interpreters to WebAssembly using Emscripten and Asyncify. This project takes a different approach:
+
+| | emglken | wasiglk |
+|---|---------|---------|
+| **Compiler** | Emscripten | Zig (with C sources) |
+| **Target** | JavaScript/WASM | WASI |
+| **Async handling** | Asyncify (code transformation) | [JSPI](https://github.com/aspect-labs/aspect-engineering/blob/main/aspect-blog/2024-10-16-async-wasm.md) (native browser feature) |
+| **Glk implementation** | RemGlk-rs (Rust) | Custom Zig implementation |
+
+**Why JSPI?** Asyncify transforms the entire WASM binary to support suspending execution, which increases code size and has performance overhead. JSPI is a native browser feature that allows WASM to suspend without transformation, resulting in smaller binaries and better performance.
 
 The interpreters use a Glk implementation (in `packages/server/src/`) that communicates via JSON over stdin/stdout, compatible with the RemGlk protocol.
 
@@ -59,26 +68,55 @@ bun run test
 - [wasi-sdk#565](https://github.com/WebAssembly/wasi-sdk/issues/565) - C++ exception support tracking issue
 - [Build instructions gist](https://gist.github.com/yerzham/302efcec6a2e82c1e8de4aed576ea29d) - How to build wasi-sdk with exception support (requires LLVM 21.1.5+)
 
-## Browser Usage with JSPI
+## Browser Usage
 
-See `examples/jspi-browser/` for a complete browser example using JSPI.
-
-JSPI allows WebAssembly to suspend execution while waiting for async JavaScript operations (like user input), without requiring Asyncify transformation.
+The `@wasiglk/client` package provides a TypeScript client for running interpreters in the browser using JSPI.
 
 **Browser Support:**
 - Chrome 131+: JSPI enabled by default
 - Chrome 128-130: Enable `chrome://flags/#enable-experimental-webassembly-jspi`
 
-```javascript
-import { runWithJSPI } from './jspi-wasi.js';
+```typescript
+import { createClient } from '@wasiglk/client';
 
-await runWithJSPI(wasmBytes, {
-    args: ['glulxe', 'story.ulx'],
-    storyData: storyFileBytes,
-    onOutput: (json) => { /* handle RemGlk output */ },
-    getInput: async () => { /* return user input */ },
+// Create client (auto-detects format and loads appropriate interpreter)
+const client = await createClient({
+  storyUrl: '/stories/adventure.gblorb',
+  // Or provide data directly:
+  // storyData: new Uint8Array(...)
 });
+
+// Run the interpreter and handle updates
+for await (const update of client.updates({ width: 80, height: 24 })) {
+  switch (update.type) {
+    case 'content':
+      // Display text content
+      console.log(update.text);
+      break;
+
+    case 'input':
+      // Prompt user for input
+      const input = await getUserInput(update.inputType);
+      client.sendInput(input);
+      break;
+
+    case 'window':
+      // Handle window creation/updates
+      break;
+  }
+}
+
+// Stop the interpreter when done
+client.stop();
 ```
+
+The client handles:
+- Automatic format detection from file extension or Blorb contents
+- Loading the appropriate interpreter WASM module
+- Parsing Blorb files and providing image URLs
+- Converting RemGlk protocol to typed updates
+
+See `examples/jspi-browser/` for a complete working example.
 
 ## Project Structure
 
