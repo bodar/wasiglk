@@ -438,4 +438,20 @@ describe('parseRemGlkUpdate', () => {
       expect(inputUpdate.ypos).toBeUndefined();
     }
   });
+
+  test('parses input request with initial text', () => {
+    const update: RemGlkUpdate = {
+      type: 'update',
+      gen: 22,
+      input: [{ id: 1, type: 'line', initial: 'prefilled text' }],
+    };
+
+    const results = parseRemGlkUpdate(update, noopResolver);
+
+    const inputUpdate = results.find((u) => u.type === 'input-request');
+    expect(inputUpdate?.type).toBe('input-request');
+    if (inputUpdate?.type === 'input-request') {
+      expect(inputUpdate.initial).toBe('prefilled text');
+    }
+  });
 });

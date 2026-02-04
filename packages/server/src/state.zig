@@ -38,6 +38,7 @@ pub const WindowData = struct {
     line_buffer: ?[*]u8 = null,
     line_buffer_uni: ?[*]glui32 = null,
     line_buflen: glui32 = 0,
+    line_initlen: glui32 = 0, // Length of pre-filled initial text
     // Retained array rock for line buffer (for dispatch layer copy-back)
     line_buffer_rock: DispatchRock = .{ .num = 0 },
     // Dispatch rock for Glulxe

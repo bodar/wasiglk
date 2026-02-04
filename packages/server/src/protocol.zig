@@ -281,7 +281,7 @@ pub fn queueContentUpdate(win_id: u32, text: ?[]const u8, clear: bool) void {
     pending_content_len += 1;
 }
 
-pub fn queueInputRequest(win_id: u32, input_type: TextInputType, mouse: bool, hyperlink: bool, xpos: ?u32, ypos: ?u32) void {
+pub fn queueInputRequest(win_id: u32, input_type: TextInputType, mouse: bool, hyperlink: bool, xpos: ?u32, ypos: ?u32, initial: ?[]const u8) void {
     if (pending_input_len >= pending_input.len) return;
     pending_input[pending_input_len] = .{
         .id = win_id,
@@ -291,6 +291,7 @@ pub fn queueInputRequest(win_id: u32, input_type: TextInputType, mouse: bool, hy
         .hyperlink = if (hyperlink) true else null,
         .xpos = xpos,
         .ypos = ypos,
+        .initial = initial,
     };
     pending_input_len += 1;
 }

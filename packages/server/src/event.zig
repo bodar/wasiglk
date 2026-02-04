@@ -14,6 +14,21 @@ const keycode = types.keycode;
 const WindowData = state.WindowData;
 const allocator = state.allocator;
 
+// Helper to extract initial text from line buffer
+fn getInitialText(w: *WindowData) ?[]const u8 {
+    if (w.line_initlen == 0) return null;
+
+    if (w.line_request and w.line_buffer != null) {
+        // Regular char buffer - can return slice directly
+        const len = @min(w.line_initlen, w.line_buflen);
+        return w.line_buffer.?[0..len];
+    }
+
+    // For unicode buffers, we'd need to convert - not yet implemented
+    // Unicode initial text would need conversion to UTF-8
+    return null;
+}
+
 export fn glk_select(event: ?*event_t) callconv(.c) void {
     if (event == null) return;
 
@@ -53,7 +68,12 @@ export fn glk_select(event: ?*event_t) callconv(.c) void {
         // For grid windows, include cursor position
         const xpos: ?glui32 = if (w.win_type == types.wintype.TextGrid) w.cursor_x else null;
         const ypos: ?glui32 = if (w.win_type == types.wintype.TextGrid) w.cursor_y else null;
-        protocol.queueInputRequest(w.id, input_type, w.mouse_request, w.hyperlink_request, xpos, ypos);
+        // Get initial text if line input with initlen > 0
+        const initial: ?[]const u8 = if ((w.line_request or w.line_request_uni) and w.line_initlen > 0)
+            getInitialText(w)
+        else
+            null;
+        protocol.queueInputRequest(w.id, input_type, w.mouse_request, w.hyperlink_request, xpos, ypos, initial);
     }
 
     // Queue timer if active
@@ -194,13 +214,13 @@ export fn glk_request_timer_events(millisecs: glui32) callconv(.c) void {
 }
 
 export fn glk_request_line_event(win_opaque: winid_t, buf: ?[*]u8, maxlen: glui32, initlen: glui32) callconv(.c) void {
-    _ = initlen;
     const win: ?*WindowData = @ptrCast(@alignCast(win_opaque));
     if (win == null) return;
 
     win.?.line_request = true;
     win.?.line_buffer = buf;
     win.?.line_buflen = maxlen;
+    win.?.line_initlen = initlen;
 
     // Register the buffer with the retained registry so it gets copied back
     if (dispatch.retained_register_fn) |register_fn| {
@@ -259,12 +279,12 @@ export fn glk_request_char_event_uni(win_opaque: winid_t) callconv(.c) void {
 }
 
 export fn glk_request_line_event_uni(win_opaque: winid_t, buf: ?[*]glui32, maxlen: glui32, initlen: glui32) callconv(.c) void {
-    _ = initlen;
     const win: ?*WindowData = @ptrCast(@alignCast(win_opaque));
     if (win == null) return;
     win.?.line_request_uni = true;
     win.?.line_buffer_uni = buf;
     win.?.line_buflen = maxlen;
+    win.?.line_initlen = initlen;
 }
 
 // glk_exit is used by event handling

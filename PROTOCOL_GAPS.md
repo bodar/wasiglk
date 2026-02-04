@@ -338,13 +338,17 @@ Currently: Not sent.
 
 ---
 
-### [ ] 30. Initial Text Not Populated
+### [x] 30. Initial Text Now Populated (FIXED)
 
-**Location:** `packages/server/src/protocol.zig:82-88`, `packages/server/src/event.zig:108-123`
+**Location:** `packages/server/src/event.zig`, `packages/server/src/state.zig`
 
 **Spec:** Line input can include `initial: "prefilled text"`
 
-Currently: Field exists but `initlen` parameter is ignored, initial text not sent.
+**Fixed:**
+1. Added `line_initlen` field to WindowData to store the initial text length
+2. `glk_request_line_event` and `glk_request_line_event_uni` now store initlen
+3. `getInitialText` helper extracts initial text from line buffer
+4. Input requests include `initial` field with pre-filled text when initlen > 0
 
 ---
 
