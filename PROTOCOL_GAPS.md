@@ -254,11 +254,16 @@ Display can send: `{type: "line", ..., terminator: "escape"}`
 
 ---
 
-### [ ] 20. Partial Input Not Captured
+### [x] 20. Partial Input Now Captured (FIXED)
 
 Display sends: `{..., partial: {WINDOW_ID: "partial text"}}`
 
-Currently: `partial` field parsed but not used. Should preserve partial input when events interrupt.
+**Fixed:**
+1. Added `line_partial_len` field to WindowData to track partial text length
+2. `parseInputEvent` now processes the `partial` field from events
+3. When events with partial data are received, text is copied to the window's line buffer
+4. `glk_cancel_line_event` now returns LineInput event with partial text length in val1
+5. Buffer dispatch unregistration added to glk_cancel_line_event for proper Glulxe integration
 
 ---
 

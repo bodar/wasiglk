@@ -281,6 +281,7 @@ export fn glk_request_line_event(win_opaque: winid_t, buf: ?[*]u8, maxlen: glui3
     win.?.line_buffer = buf;
     win.?.line_buflen = maxlen;
     win.?.line_initlen = initlen;
+    win.?.line_partial_len = 0; // Reset partial text from any previous interrupted input
 
     // Register the buffer with the retained registry so it gets copied back
     if (dispatch.retained_register_fn) |register_fn| {
@@ -308,16 +309,37 @@ export fn glk_request_mouse_event(win_opaque: winid_t) callconv(.c) void {
 export fn glk_cancel_line_event(win_opaque: winid_t, event: ?*event_t) callconv(.c) void {
     const win: ?*WindowData = @ptrCast(@alignCast(win_opaque));
     if (win == null) return;
+    const w = win.?;
 
     if (event) |e| {
-        e.type = evtype.None;
-        e.win = null;
-        e.val1 = 0;
-        e.val2 = 0;
+        // If line input was active, return LineInput event with partial text length
+        if (w.line_request or w.line_request_uni) {
+            e.type = evtype.LineInput;
+            e.win = win_opaque;
+            e.val1 = w.line_partial_len; // Number of characters entered so far
+            e.val2 = 0;
+        } else {
+            e.type = evtype.None;
+            e.win = null;
+            e.val1 = 0;
+            e.val2 = 0;
+        }
     }
 
-    win.?.line_request = false;
-    win.?.line_buffer = null;
+    // Unregister the buffer so Glulxe copies data back to VM memory
+    if (w.line_request and w.line_buffer != null) {
+        if (dispatch.retained_unregister_fn) |unregister_fn| {
+            var typecode = "&+#!Cn".*;
+            unregister_fn(@ptrCast(w.line_buffer), w.line_buflen, &typecode, w.line_buffer_rock);
+        }
+    }
+
+    w.line_request = false;
+    w.line_request_uni = false;
+    w.line_buffer = null;
+    w.line_buffer_uni = null;
+    w.line_partial_len = 0;
+    w.line_buffer_rock = .{ .num = 0 };
 }
 
 export fn glk_cancel_char_event(win_opaque: winid_t) callconv(.c) void {
@@ -345,6 +367,7 @@ export fn glk_request_line_event_uni(win_opaque: winid_t, buf: ?[*]glui32, maxle
     win.?.line_buffer_uni = buf;
     win.?.line_buflen = maxlen;
     win.?.line_initlen = initlen;
+    win.?.line_partial_len = 0; // Reset partial text from any previous interrupted input
 }
 
 // glk_exit is used by event handling

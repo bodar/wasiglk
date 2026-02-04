@@ -193,6 +193,39 @@ pub fn parseInputEvent(json_str: []const u8) ?InputEvent {
         }
     }
 
+    // Process partial field - copy partial input text to windows' line buffers
+    // Partial is an object like {"1": "hello", "2": "world"} where keys are window IDs
+    if (parsed.value.partial) |partial_val| {
+        if (partial_val == .object) {
+            var iter = partial_val.object.iterator();
+            while (iter.next()) |entry| {
+                // Parse window ID from key
+                const win_id = std.fmt.parseInt(u32, entry.key_ptr.*, 10) catch continue;
+                // Get partial text value
+                const partial_text = if (entry.value_ptr.* == .string)
+                    entry.value_ptr.string
+                else
+                    continue;
+
+                // Find window and copy partial text to its line buffer
+                var win = state.window_list;
+                while (win) |w| : (win = w.next) {
+                    if (w.id == win_id and w.line_request and w.line_buffer != null) {
+                        // Copy partial text to line buffer
+                        const max_copy = if (w.line_buflen > 0) w.line_buflen - 1 else 0;
+                        const copy_len: glui32 = @intCast(@min(partial_text.len, max_copy));
+                        if (copy_len > 0) {
+                            @memcpy(w.line_buffer.?[0..copy_len], partial_text[0..copy_len]);
+                        }
+                        // Store partial length for glk_cancel_line_event
+                        w.line_partial_len = copy_len;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // Copy to avoid lifetime issues
     return InputEvent{
         .type = allocator.dupe(u8, parsed.value.type) catch return null,

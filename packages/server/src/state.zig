@@ -39,6 +39,7 @@ pub const WindowData = struct {
     line_buffer_uni: ?[*]glui32 = null,
     line_buflen: glui32 = 0,
     line_initlen: glui32 = 0, // Length of pre-filled initial text
+    line_partial_len: glui32 = 0, // Length of partial text from interrupted input
     // Line input terminators (keycodes that should terminate line input)
     line_terminators: [16]glui32 = undefined,
     line_terminators_count: glui32 = 0,
