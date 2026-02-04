@@ -50,7 +50,10 @@ export fn glk_select(event: ?*event_t) callconv(.c) void {
     // Queue input request if we have a window with input request
     if (win) |w| {
         const input_type: protocol.TextInputType = if (w.line_request or w.line_request_uni) .line else .char;
-        protocol.queueInputRequest(w.id, input_type, w.mouse_request, w.hyperlink_request);
+        // For grid windows, include cursor position
+        const xpos: ?glui32 = if (w.win_type == types.wintype.TextGrid) w.cursor_x else null;
+        const ypos: ?glui32 = if (w.win_type == types.wintype.TextGrid) w.cursor_y else null;
+        protocol.queueInputRequest(w.id, input_type, w.mouse_request, w.hyperlink_request, xpos, ypos);
     }
 
     // Queue timer if active

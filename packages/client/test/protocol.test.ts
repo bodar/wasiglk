@@ -404,4 +404,38 @@ describe('parseRemGlkUpdate', () => {
       expect(inputUpdate.hyperlink).toBe(true);
     }
   });
+
+  test('parses input request with grid cursor position', () => {
+    const update: RemGlkUpdate = {
+      type: 'update',
+      gen: 20,
+      input: [{ id: 1, type: 'line', xpos: 5, ypos: 2 }],
+    };
+
+    const results = parseRemGlkUpdate(update, noopResolver);
+
+    const inputUpdate = results.find((u) => u.type === 'input-request');
+    expect(inputUpdate?.type).toBe('input-request');
+    if (inputUpdate?.type === 'input-request') {
+      expect(inputUpdate.xpos).toBe(5);
+      expect(inputUpdate.ypos).toBe(2);
+    }
+  });
+
+  test('input request without grid position has undefined xpos/ypos', () => {
+    const update: RemGlkUpdate = {
+      type: 'update',
+      gen: 21,
+      input: [{ id: 1, type: 'line' }],
+    };
+
+    const results = parseRemGlkUpdate(update, noopResolver);
+
+    const inputUpdate = results.find((u) => u.type === 'input-request');
+    expect(inputUpdate?.type).toBe('input-request');
+    if (inputUpdate?.type === 'input-request') {
+      expect(inputUpdate.xpos).toBeUndefined();
+      expect(inputUpdate.ypos).toBeUndefined();
+    }
+  });
 });

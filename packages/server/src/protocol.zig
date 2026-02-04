@@ -110,6 +110,8 @@ pub const InputRequest = struct {
     initial: ?[]const u8 = null,
     mouse: ?bool = null, // true if mouse input is enabled for this window
     hyperlink: ?bool = null, // true if hyperlink input is enabled for this window
+    xpos: ?u32 = null, // cursor x position for grid windows
+    ypos: ?u32 = null, // cursor y position for grid windows
 };
 
 const StateUpdate = struct {
@@ -279,7 +281,7 @@ pub fn queueContentUpdate(win_id: u32, text: ?[]const u8, clear: bool) void {
     pending_content_len += 1;
 }
 
-pub fn queueInputRequest(win_id: u32, input_type: TextInputType, mouse: bool, hyperlink: bool) void {
+pub fn queueInputRequest(win_id: u32, input_type: TextInputType, mouse: bool, hyperlink: bool, xpos: ?u32, ypos: ?u32) void {
     if (pending_input_len >= pending_input.len) return;
     pending_input[pending_input_len] = .{
         .id = win_id,
@@ -287,6 +289,8 @@ pub fn queueInputRequest(win_id: u32, input_type: TextInputType, mouse: bool, hy
         .gen = generation,
         .mouse = if (mouse) true else null,
         .hyperlink = if (hyperlink) true else null,
+        .xpos = xpos,
+        .ypos = ypos,
     };
     pending_input_len += 1;
 }

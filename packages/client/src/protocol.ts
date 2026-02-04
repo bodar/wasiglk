@@ -172,6 +172,8 @@ export interface InputRequest {
   initial?: string;
   mouse?: boolean;  // true if mouse input is enabled for this window
   hyperlink?: boolean;  // true if hyperlink input is enabled for this window
+  xpos?: number;  // cursor x position for grid windows
+  ypos?: number;  // cursor y position for grid windows
 }
 
 // Client update types (what we yield from the async iterator)
@@ -216,6 +218,8 @@ export interface InputRequestClientUpdate {
   initial?: string;
   mouse?: boolean;  // true if mouse input is enabled for this window
   hyperlink?: boolean;  // true if hyperlink input is enabled for this window
+  xpos?: number;  // cursor x position for grid windows
+  ypos?: number;  // cursor y position for grid windows
 }
 
 export interface WindowClientUpdate {
@@ -304,6 +308,8 @@ export function parseRemGlkUpdate(
         initial: input.initial,
         mouse: input.mouse,
         hyperlink: input.hyperlink,
+        xpos: input.xpos,
+        ypos: input.ypos,
       });
     }
   }

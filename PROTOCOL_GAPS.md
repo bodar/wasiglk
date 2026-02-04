@@ -330,11 +330,11 @@ Currently: Not sent.
 
 ---
 
-### [ ] 29. Grid Input Position Not Sent
+### [x] 29. Grid Input Position Now Sent (FIXED)
 
 **Spec:** Grid window input requires `xpos` and `ypos` for cursor position.
 
-Currently: Not sent for grid windows.
+**Fixed:** Input requests for grid windows now include `xpos` and `ypos` fields with the current cursor position.
 
 ---
 
