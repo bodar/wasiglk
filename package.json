@@ -14,9 +14,9 @@
     "wasi",
     "webassembly"
   ],
-  "repository": "curiousdannii/wasiglk",
-  "bugs": "https://github.com/curiousdannii/wasiglk/issues",
-  "homepage": "https://github.com/curiousdannii/wasiglk",
+  "repository": "danielbodart/wasiglk",
+  "bugs": "https://github.com/danielbodart/wasiglk/issues",
+  "homepage": "https://github.com/danielbodart/wasiglk",
   "type": "module",
   "devDependencies": {
     "@playwright/test": "^1.58.1",
