@@ -388,11 +388,12 @@ Fields that should be included in input requests but aren't.
 11. ~~Hyperlink events (#10)~~ ✅ FIXED - hyperlink_request flag, glk_request/cancel_hyperlink_event, hyperlink event parsing, client sendHyperlink method
 
 ### Low Priority (Polish)
-12. Metrics completeness (#9)
+12. ~~Metrics completeness (#9)~~ ✅ FIXED - all GlkOte spec metrics fields added
 13. Window positions (#8)
-14. Remaining input fields (#26-30)
+14. ~~Remaining input fields (#26-30)~~ ✅ FIXED - terminators (#26), hyperlink (#27), mouse (#28), xpos/ypos (#29), initial (#30) all implemented
 15. Debug features (#17, #25)
 16. External events (#18)
+17. ~~Partial input (#20)~~ ✅ FIXED - partial text captured from interrupted input
 
 ---
 
