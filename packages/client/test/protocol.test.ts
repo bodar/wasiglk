@@ -5,29 +5,15 @@ import { parseRemGlkUpdate, type RemGlkUpdate } from '../src/protocol';
 const noopResolver = () => undefined;
 
 describe('parseRemGlkUpdate', () => {
-  test('parses init update', () => {
-    const update: RemGlkUpdate = {
-      type: 'init',
-      gen: 1,
-      support: ['graphics', 'hyperlinks'],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-    expect(results).toHaveLength(1);
-    expect(results[0].type).toBe('init');
-    if (results[0].type === 'init') {
-      expect(results[0].support).toContain('graphics');
-    }
-  });
-
-  test('parses content update with plain text', () => {
+  test('parses content update with plain text (paragraph format)', () => {
+    // GlkOte spec: buffer window text uses paragraph structure
     const update: RemGlkUpdate = {
       type: 'update',
       gen: 2,
       content: [
         {
           id: 1,
-          text: [{ style: 'normal', text: 'Hello, world!' }],
+          text: [{ append: true, content: [{ style: 'normal', text: 'Hello, world!' }] }],
         },
       ],
     };
@@ -45,14 +31,15 @@ describe('parseRemGlkUpdate', () => {
     }
   });
 
-  test('parses content with string spans', () => {
+  test('parses content with string spans (paragraph format)', () => {
+    // GlkOte spec: buffer window text uses paragraph structure
     const update: RemGlkUpdate = {
       type: 'update',
       gen: 3,
       content: [
         {
           id: 1,
-          text: ['Plain text as string'],
+          text: [{ append: true, content: ['Plain text as string'] }],
         },
       ],
     };
@@ -66,10 +53,11 @@ describe('parseRemGlkUpdate', () => {
     }
   });
 
-  test('parses content with image special span', () => {
+  test('parses content with image special span (paragraph format)', () => {
     const imageUrlResolver = (num: number) =>
       num === 5 ? 'blob:test-image-5' : undefined;
 
+    // GlkOte spec: buffer window text uses paragraph structure
     const update: RemGlkUpdate = {
       type: 'update',
       gen: 4,
@@ -78,12 +66,17 @@ describe('parseRemGlkUpdate', () => {
           id: 1,
           text: [
             {
-              special: {
-                type: 'image',
-                image: 5,
-                width: 100,
-                height: 80,
-              },
+              append: true,
+              content: [
+                {
+                  special: {
+                    type: 'image',
+                    image: 5,
+                    width: 100,
+                    height: 80,
+                  },
+                },
+              ],
             },
           ],
         },
@@ -104,14 +97,15 @@ describe('parseRemGlkUpdate', () => {
     }
   });
 
-  test('parses content with flowbreak special span', () => {
+  test('parses content with flowbreak (paragraph format)', () => {
+    // GlkOte spec: flowbreak can be in paragraph object or content array
     const update: RemGlkUpdate = {
       type: 'update',
       gen: 5,
       content: [
         {
           id: 1,
-          text: [{ special: { type: 'flowbreak' } }],
+          text: [{ flowbreak: true }],
         },
       ],
     };
@@ -223,6 +217,59 @@ describe('parseRemGlkUpdate', () => {
     expect(contentUpdate?.type).toBe('content');
     if (contentUpdate?.type === 'content') {
       expect(contentUpdate.clear).toBe(true);
+    }
+  });
+
+  test('parses grid window lines format (GlkOte spec)', () => {
+    // GlkOte spec: grid window content uses lines array with explicit line numbers
+    const update: RemGlkUpdate = {
+      type: 'update',
+      gen: 10,
+      content: [
+        {
+          id: 2,
+          lines: [
+            { line: 0, content: [' At End Of Road                     Score: 36    Moves: 1'] },
+          ],
+        },
+      ],
+    };
+
+    const results = parseRemGlkUpdate(update, noopResolver);
+
+    const contentUpdate = results.find((u) => u.type === 'content');
+    expect(contentUpdate?.type).toBe('content');
+    if (contentUpdate?.type === 'content') {
+      expect(contentUpdate.windowId).toBe(2);
+      expect(contentUpdate.content).toHaveLength(1);
+      expect(contentUpdate.content[0].type).toBe('text');
+      expect(contentUpdate.content[0].text).toBe(' At End Of Road                     Score: 36    Moves: 1');
+    }
+  });
+
+  test('parses grid window with multiple lines', () => {
+    const update: RemGlkUpdate = {
+      type: 'update',
+      gen: 11,
+      content: [
+        {
+          id: 2,
+          lines: [
+            { line: 0, content: ['Line 0 text'] },
+            { line: 2, content: ['Line 2 text'] },
+          ],
+        },
+      ],
+    };
+
+    const results = parseRemGlkUpdate(update, noopResolver);
+
+    const contentUpdate = results.find((u) => u.type === 'content');
+    expect(contentUpdate?.type).toBe('content');
+    if (contentUpdate?.type === 'content') {
+      expect(contentUpdate.content).toHaveLength(2);
+      expect(contentUpdate.content[0].text).toBe('Line 0 text');
+      expect(contentUpdate.content[1].text).toBe('Line 2 text');
     }
   });
 });

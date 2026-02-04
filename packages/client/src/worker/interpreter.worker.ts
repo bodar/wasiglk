@@ -64,9 +64,10 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
             charwidth: msg.metrics.charWidth,
             charheight: msg.metrics.charHeight,
           },
+          // Declare features the display supports (per GlkOte spec)
+          support: ['timer', 'graphics', 'graphicswin', 'hyperlinks'],
         } satisfies InputEvent);
       }
-      post({ type: 'waiting-for-input' });
       return new Promise<string>(resolve => { inputResolve = resolve; });
     });
 
@@ -127,8 +128,6 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
     const imports = wrapWithJSPI(wasiInstance, stdin, opfsStorage, root);
     const instance = await WebAssembly.instantiate(module, imports);
     wasiInstance.inst = instance as { exports: { memory: WebAssembly.Memory } };
-
-    post({ type: 'ready' });
 
     // Run with JSPI
     const main = (instance.exports._start ?? instance.exports.main) as Function | undefined;

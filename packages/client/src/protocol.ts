@@ -10,6 +10,7 @@ export interface InitEvent {
   type: 'init';
   gen: number;
   metrics: Metrics;
+  support?: string[];  // Features the display supports: 'timer', 'graphics', 'graphicswin', 'hyperlinks'
 }
 
 export interface LineInputEvent {
@@ -37,13 +38,12 @@ export interface Metrics {
 
 // Output updates (interpreter -> client)
 export interface RemGlkUpdate {
-  type: 'update' | 'init' | 'error';
+  type: 'update' | 'error';
   gen: number;
   windows?: WindowUpdate[];
   content?: ContentUpdate[];
   input?: InputRequest[];
   message?: string;
-  support?: string[];
 }
 
 export interface WindowUpdate {
@@ -54,14 +54,45 @@ export interface WindowUpdate {
   top?: number;
   width: number;
   height: number;
+  // Grid window dimensions (character cells)
   gridwidth?: number;
   gridheight?: number;
+  // Graphics window canvas dimensions (pixels)
+  graphwidth?: number;
+  graphheight?: number;
 }
 
 export interface ContentUpdate {
   id: number;
   clear?: boolean;
-  text?: ContentSpan[];
+  text?: TextParagraph[];   // Buffer windows: array of paragraph objects (GlkOte spec)
+  lines?: GridLine[];       // Grid windows: array of line objects (GlkOte spec)
+  draw?: DrawOperation[];   // Graphics windows: array of draw operations (GlkOte spec)
+}
+
+// Buffer window paragraph structure (GlkOte spec)
+export interface TextParagraph {
+  append?: boolean;
+  flowbreak?: boolean;
+  content?: ContentSpan[];
+}
+
+// Grid window line structure (GlkOte spec)
+export interface GridLine {
+  line: number;
+  content?: ContentSpan[];
+}
+
+// Graphics window draw operations (GlkOte spec)
+export interface DrawOperation {
+  special: 'setcolor' | 'fill' | 'image';
+  color?: string;  // CSS hex color like "#RRGGBB"
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  image?: number;
+  url?: string;
 }
 
 export type ContentSpan = string | TextSpan | SpecialSpan;
@@ -116,16 +147,10 @@ export interface InputRequest {
 
 // Client update types (what we yield from the async iterator)
 export type ClientUpdate =
-  | InitClientUpdate
   | ContentClientUpdate
   | InputRequestClientUpdate
   | WindowClientUpdate
   | ErrorClientUpdate;
-
-export interface InitClientUpdate {
-  type: 'init';
-  support: string[];
-}
 
 export interface ContentClientUpdate {
   type: 'content';
@@ -135,7 +160,7 @@ export interface ContentClientUpdate {
 }
 
 export interface ProcessedContentSpan {
-  type: 'text' | 'image' | 'flowbreak';
+  type: 'text' | 'image' | 'flowbreak' | 'fill' | 'setcolor';
   // Text fields
   text?: string;
   style?: string;
@@ -147,6 +172,10 @@ export interface ProcessedContentSpan {
   width?: number;
   height?: number;
   alttext?: string;
+  // Graphics draw fields (from draw array)
+  color?: string;  // CSS hex color
+  x?: number;
+  y?: number;
 }
 
 export interface InputRequestClientUpdate {
@@ -176,13 +205,6 @@ export function parseRemGlkUpdate(
 ): ClientUpdate[] {
   const clientUpdates: ClientUpdate[] = [];
 
-  if (update.type === 'init') {
-    clientUpdates.push({
-      type: 'init',
-      support: update.support ?? [],
-    });
-  }
-
   if (update.type === 'error') {
     clientUpdates.push({
       type: 'error',
@@ -199,12 +221,39 @@ export function parseRemGlkUpdate(
 
   if (update.content) {
     for (const content of update.content) {
-      clientUpdates.push({
-        type: 'content',
-        windowId: content.id,
-        clear: content.clear ?? false,
-        content: processContentSpans(content.text ?? [], resolveImageUrl),
-      });
+      // Handle graphics window draw operations
+      if (content.draw) {
+        clientUpdates.push({
+          type: 'content',
+          windowId: content.id,
+          clear: content.clear ?? false,
+          content: processDrawOperations(content.draw, resolveImageUrl),
+        });
+      } else if (content.lines) {
+        // Handle grid window lines format
+        clientUpdates.push({
+          type: 'content',
+          windowId: content.id,
+          clear: content.clear ?? false,
+          content: processGridLines(content.lines, resolveImageUrl),
+        });
+      } else if (content.text) {
+        // Handle buffer window content - may be paragraph format or legacy format
+        clientUpdates.push({
+          type: 'content',
+          windowId: content.id,
+          clear: content.clear ?? false,
+          content: processBufferText(content.text, resolveImageUrl),
+        });
+      } else {
+        // Empty content update (clear only)
+        clientUpdates.push({
+          type: 'content',
+          windowId: content.id,
+          clear: content.clear ?? false,
+          content: [],
+        });
+      }
     }
   }
 
@@ -223,42 +272,137 @@ export function parseRemGlkUpdate(
   return clientUpdates;
 }
 
+function processContentSpan(
+  span: ContentSpan,
+  resolveImageUrl: (imageNum: number) => string | undefined
+): ProcessedContentSpan | null {
+  if (typeof span === 'string') {
+    return { type: 'text', text: span };
+  }
+  if ('text' in span) {
+    return {
+      type: 'text',
+      text: span.text,
+      style: span.style,
+      hyperlink: span.hyperlink,
+    };
+  }
+  if ('special' in span) {
+    const special = span.special;
+    if (special.type === 'image' && special.image !== undefined) {
+      return {
+        type: 'image',
+        imageNumber: special.image,
+        imageUrl: resolveImageUrl(special.image) ?? special.url,
+        alignment: typeof special.alignment === 'number'
+          ? IMAGE_ALIGNMENT_VALUES[special.alignment]
+          : special.alignment,
+        width: special.width,
+        height: special.height,
+        alttext: special.alttext,
+      };
+    }
+    if (special.type === 'flowbreak') {
+      return { type: 'flowbreak' };
+    }
+  }
+  return null;
+}
+
 function processContentSpans(
   spans: ContentSpan[],
   resolveImageUrl: (imageNum: number) => string | undefined
 ): ProcessedContentSpan[] {
-  const result: ProcessedContentSpan[] = [];
+  return spans
+    .map((span) => processContentSpan(span, resolveImageUrl))
+    .filter((span): span is ProcessedContentSpan => span !== null);
+}
 
-  for (const span of spans) {
-    if (typeof span === 'string') {
-      result.push({ type: 'text', text: span });
-    } else if ('text' in span) {
-      result.push({
-        type: 'text',
-        text: span.text,
-        style: span.style,
-        hyperlink: span.hyperlink,
-      });
-    } else if ('special' in span) {
-      const special = span.special;
-      if (special.type === 'image' && special.image !== undefined) {
-        const url = resolveImageUrl(special.image) ?? special.url;
-        result.push({
+function processDrawOperation(
+  draw: DrawOperation,
+  resolveImageUrl: (imageNum: number) => string | undefined
+): ProcessedContentSpan | null {
+  switch (draw.special) {
+    case 'image':
+      if (draw.image !== undefined) {
+        return {
           type: 'image',
-          imageNumber: special.image,
-          imageUrl: url,
-          alignment: typeof special.alignment === 'number'
-            ? IMAGE_ALIGNMENT_VALUES[special.alignment]
-            : special.alignment,
-          width: special.width,
-          height: special.height,
-          alttext: special.alttext,
-        });
-      } else if (special.type === 'flowbreak') {
-        result.push({ type: 'flowbreak' });
+          imageNumber: draw.image,
+          imageUrl: resolveImageUrl(draw.image) ?? draw.url,
+          width: draw.width,
+          height: draw.height,
+          x: draw.x,
+          y: draw.y,
+        };
       }
-    }
+      return null;
+    case 'fill':
+      return {
+        type: 'fill',
+        color: draw.color,
+        x: draw.x,
+        y: draw.y,
+        width: draw.width,
+        height: draw.height,
+      };
+    case 'setcolor':
+      return {
+        type: 'setcolor',
+        color: draw.color,
+      };
+    default:
+      return null;
   }
+}
 
-  return result;
+/**
+ * Process graphics window draw operations (GlkOte spec format)
+ */
+function processDrawOperations(
+  draws: DrawOperation[],
+  resolveImageUrl: (imageNum: number) => string | undefined
+): ProcessedContentSpan[] {
+  return draws
+    .map((draw) => processDrawOperation(draw, resolveImageUrl))
+    .filter((span): span is ProcessedContentSpan => span !== null);
+}
+
+/**
+ * Process buffer window paragraphs (GlkOte spec format)
+ */
+function processBufferText(
+  paragraphs: TextParagraph[],
+  resolveImageUrl: (imageNum: number) => string | undefined
+): ProcessedContentSpan[] {
+  // Defensive check - ensure we have an array
+  if (!Array.isArray(paragraphs)) {
+    console.warn('processBufferText: expected array, got', typeof paragraphs, paragraphs);
+    // Handle legacy string format
+    if (typeof paragraphs === 'string') {
+      return [{ type: 'text', text: paragraphs }];
+    }
+    return [];
+  }
+  return paragraphs.flatMap((para): ProcessedContentSpan[] => {
+    const spans: ProcessedContentSpan[] = [];
+    if (para.flowbreak) {
+      spans.push({ type: 'flowbreak' });
+    }
+    if (para.content) {
+      spans.push(...processContentSpans(para.content, resolveImageUrl));
+    }
+    return spans;
+  });
+}
+
+/**
+ * Process grid window lines (GlkOte spec format)
+ */
+function processGridLines(
+  lines: GridLine[],
+  resolveImageUrl: (imageNum: number) => string | undefined
+): ProcessedContentSpan[] {
+  return lines.flatMap((line) =>
+    line.content ? processContentSpans(line.content, resolveImageUrl) : []
+  );
 }

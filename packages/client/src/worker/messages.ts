@@ -20,8 +20,6 @@ export type MainToWorkerMessage =
 
 /** Messages from worker to main thread */
 export type WorkerToMainMessage =
-  | { type: 'ready' }
   | { type: 'update'; data: RemGlkUpdate }
-  | { type: 'waiting-for-input' }
   | { type: 'error'; message: string }
   | { type: 'exit'; code: number };

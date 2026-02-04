@@ -38,6 +38,7 @@ pub const InputEvent = struct {
     window: ?u32 = null,
     value: ?[]const u8 = null,
     metrics: ?Metrics = null,
+    support: ?[]const []const u8 = null, // Features the display supports
     partial: ?std.json.Value = null,
 };
 
@@ -69,8 +70,12 @@ pub const WindowUpdate = struct {
     top: f64 = 0,
     width: f64,
     height: f64,
+    // Grid window dimensions (character cells)
     gridwidth: ?u32 = null,
     gridheight: ?u32 = null,
+    // Graphics window canvas dimensions (pixels)
+    graphwidth: ?u32 = null,
+    graphheight: ?u32 = null,
 };
 
 pub const ContentUpdate = struct {
@@ -95,12 +100,6 @@ const StateUpdate = struct {
     input: ?[]const InputRequest = null,
 };
 
-const InitResponse = struct {
-    type: []const u8 = "init",
-    gen: u32 = 0,
-    metrics: ?Metrics = null,
-    support: []const []const u8 = &[_][]const u8{ "timer", "hyperlinks", "graphics", "graphicswin" },
-};
 
 const ErrorResponse = struct {
     type: []const u8 = "error",
@@ -161,10 +160,6 @@ pub fn sendError(message: []const u8) void {
     writeJson(ErrorResponse{ .message = message });
 }
 
-pub fn sendInitResponse() void {
-    writeJson(InitResponse{});
-}
-
 pub fn queueWindowUpdate(win: *WindowData) void {
     if (pending_windows_len >= pending_windows.len) return;
     const wtype: WindowType = switch (win.win_type) {
@@ -179,8 +174,12 @@ pub fn queueWindowUpdate(win: *WindowData) void {
         .rock = win.rock,
         .width = @floatFromInt(state.client_metrics.width),
         .height = @floatFromInt(state.client_metrics.height),
+        // Grid windows: dimensions in character cells
         .gridwidth = if (wtype == .grid) state.client_metrics.width else null,
         .gridheight = if (wtype == .grid) state.client_metrics.height else null,
+        // Graphics windows: canvas dimensions in pixels
+        .graphwidth = if (wtype == .graphics) state.client_metrics.width else null,
+        .graphheight = if (wtype == .graphics) state.client_metrics.height else null,
     };
     pending_windows_len += 1;
 }
@@ -207,18 +206,32 @@ pub fn queueInputRequest(win_id: u32, input_type: TextInputType) void {
 
 // ============== Special Update Functions ==============
 
-// Send an image content update directly (bypasses normal queue to handle JSON array format)
+// Alignment value to string mapping per GlkOte spec
+fn alignmentToString(alignment: glsi32) []const u8 {
+    return switch (alignment) {
+        1 => "inlineup",
+        2 => "inlinedown",
+        3 => "inlinecenter",
+        4 => "marginleft",
+        5 => "marginright",
+        else => "inlineup",
+    };
+}
+
+// Send an image content update for buffer windows using paragraph format per GlkOte spec
 pub fn sendImageUpdate(win_id: u32, image: glui32, alignment: glsi32, img_width: glui32, img_height: glui32) void {
     // Flush any pending updates first
     if (pending_content_len > 0 or pending_windows_len > 0 or pending_input_len > 0) {
         sendUpdate();
     }
 
-    // Build the JSON manually to get the correct array format for text
+    const alignment_str = alignmentToString(alignment);
+
+    // Build JSON with paragraph format: {"text":[{"append":true,"content":[{"special":"image",...}]}]}
     var buf: [1024]u8 = undefined;
     const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"special":{{"type":"image","image":{d},"alignment":{d},"width":{d},"height":{d}}}}}]}}]}}
-    , .{ generation, win_id, image, alignment, img_width, img_height }) catch return;
+        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"append":true,"content":[{{"special":"image","image":{d},"alignment":"{s}","width":{d},"height":{d}}}]}}]}}]}}
+    , .{ generation, win_id, image, alignment_str, img_width, img_height }) catch return;
 
     writeStdout(json);
     writeStdout("\n");
@@ -226,6 +239,7 @@ pub fn sendImageUpdate(win_id: u32, image: glui32, alignment: glsi32, img_width:
 }
 
 // Send a graphics window image update (includes x, y position)
+// Uses "draw" array with "special" as string value per GlkOte spec
 pub fn sendGraphicsImageUpdate(win_id: u32, image: glui32, x: glsi32, y: glsi32, img_width: glui32, img_height: glui32) void {
     if (pending_content_len > 0 or pending_windows_len > 0 or pending_input_len > 0) {
         sendUpdate();
@@ -233,7 +247,7 @@ pub fn sendGraphicsImageUpdate(win_id: u32, image: glui32, x: glsi32, y: glsi32,
 
     var buf: [1024]u8 = undefined;
     const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"special":{{"type":"image","image":{d},"x":{d},"y":{d},"width":{d},"height":{d}}}}}]}}]}}
+        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"draw":[{{"special":"image","image":{d},"x":{d},"y":{d},"width":{d},"height":{d}}}]}}]}}
     , .{ generation, win_id, image, x, y, img_width, img_height }) catch return;
 
     writeStdout(json);
@@ -246,9 +260,10 @@ pub fn sendFlowBreakUpdate(win_id: u32) void {
         sendUpdate();
     }
 
+    // Use paragraph format with flowbreak flag per GlkOte spec
     var buf: [256]u8 = undefined;
     const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"special":{{"type":"flowbreak"}}}}]}}]}}
+        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"flowbreak":true}}]}}]}}
     , .{ generation, win_id }) catch return;
 
     writeStdout(json);
@@ -256,15 +271,27 @@ pub fn sendFlowBreakUpdate(win_id: u32) void {
     generation += 1;
 }
 
+// Helper to format a color integer as CSS hex string "#RRGGBB"
+fn formatColorHex(buf: []u8, color: glui32) []const u8 {
+    const r: u8 = @truncate((color >> 16) & 0xFF);
+    const g: u8 = @truncate((color >> 8) & 0xFF);
+    const b: u8 = @truncate(color & 0xFF);
+    return std.fmt.bufPrint(buf, "#{X:0>2}{X:0>2}{X:0>2}", .{ r, g, b }) catch "#000000";
+}
+
 pub fn sendGraphicsFillUpdate(win_id: u32, color: glui32, x: glsi32, y: glsi32, width: glui32, height: glui32) void {
     if (pending_content_len > 0 or pending_windows_len > 0 or pending_input_len > 0) {
         sendUpdate();
     }
 
+    // Format color as CSS hex string
+    var color_buf: [8]u8 = undefined;
+    const color_str = formatColorHex(&color_buf, color);
+
     var buf: [512]u8 = undefined;
     const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"special":{{"type":"fill","color":{d},"x":{d},"y":{d},"width":{d},"height":{d}}}}}]}}]}}
-    , .{ generation, win_id, color, x, y, width, height }) catch return;
+        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"draw":[{{"special":"fill","color":"{s}","x":{d},"y":{d},"width":{d},"height":{d}}}]}}]}}
+    , .{ generation, win_id, color_str, x, y, width, height }) catch return;
 
     writeStdout(json);
     writeStdout("\n");
@@ -278,7 +305,7 @@ pub fn sendGraphicsEraseUpdate(win_id: u32, x: glsi32, y: glsi32, width: glui32,
 
     var buf: [512]u8 = undefined;
     const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"special":{{"type":"fill","x":{d},"y":{d},"width":{d},"height":{d}}}}}]}}]}}
+        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"draw":[{{"special":"fill","x":{d},"y":{d},"width":{d},"height":{d}}}]}}]}}
     , .{ generation, win_id, x, y, width, height }) catch return;
 
     writeStdout(json);
@@ -291,26 +318,207 @@ pub fn sendGraphicsSetColorUpdate(win_id: u32, color: glui32) void {
         sendUpdate();
     }
 
+    // Format color as CSS hex string
+    var color_buf: [8]u8 = undefined;
+    const color_str = formatColorHex(&color_buf, color);
+
     var buf: [256]u8 = undefined;
     const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"special":{{"type":"setcolor","color":{d}}}}}]}}]}}
-    , .{ generation, win_id, color }) catch return;
+        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"draw":[{{"special":"setcolor","color":"{s}"}}]}}]}}
+    , .{ generation, win_id, color_str }) catch return;
 
     writeStdout(json);
     writeStdout("\n");
     generation += 1;
-    pending_content_len += 1;
 }
 
 // ============== Text Buffer Management ==============
 
+// Helper to escape a string for JSON output
+fn jsonEscapeString(input: []const u8, output: []u8) []const u8 {
+    var out_i: usize = 0;
+    for (input) |c| {
+        if (out_i + 6 >= output.len) break; // Ensure space for escape sequences
+        switch (c) {
+            '"' => {
+                output[out_i] = '\\';
+                output[out_i + 1] = '"';
+                out_i += 2;
+            },
+            '\\' => {
+                output[out_i] = '\\';
+                output[out_i + 1] = '\\';
+                out_i += 2;
+            },
+            '\n' => {
+                output[out_i] = '\\';
+                output[out_i + 1] = 'n';
+                out_i += 2;
+            },
+            '\r' => {
+                output[out_i] = '\\';
+                output[out_i + 1] = 'r';
+                out_i += 2;
+            },
+            '\t' => {
+                output[out_i] = '\\';
+                output[out_i + 1] = 't';
+                out_i += 2;
+            },
+            else => {
+                if (c < 0x20) {
+                    // Control character - use \uXXXX format
+                    const hex = "0123456789abcdef";
+                    output[out_i] = '\\';
+                    output[out_i + 1] = 'u';
+                    output[out_i + 2] = '0';
+                    output[out_i + 3] = '0';
+                    output[out_i + 4] = hex[c >> 4];
+                    output[out_i + 5] = hex[c & 0xf];
+                    out_i += 6;
+                } else {
+                    output[out_i] = c;
+                    out_i += 1;
+                }
+            },
+        }
+    }
+    return output[0..out_i];
+}
+
 pub fn flushTextBuffer() void {
     if (state.text_buffer_len > 0 and state.text_buffer_win != null) {
-        // Need to copy text since we're queuing it
-        const text_copy = allocator.dupe(u8, state.text_buffer[0..state.text_buffer_len]) catch return;
-        queueContentUpdate(state.text_buffer_win.?.id, text_copy, false);
+        const win = state.text_buffer_win.?;
+        const win_type = win.win_type;
+
+        // For buffer windows, we need to use the paragraph format per GlkOte spec
+        if (win_type == wintype.TextBuffer) {
+            sendBufferTextUpdate(win.id, state.text_buffer[0..state.text_buffer_len], false);
+        } else {
+            // For other window types, queue normally for now
+            const text_copy = allocator.dupe(u8, state.text_buffer[0..state.text_buffer_len]) catch return;
+            queueContentUpdate(win.id, text_copy, false);
+        }
         state.text_buffer_len = 0;
     }
+}
+
+// Flush dirty grid lines for all grid windows
+pub fn flushGridWindows() void {
+    var win = state.window_list;
+    while (win) |w| : (win = w.next) {
+        if (w.win_type == wintype.TextGrid) {
+            flushGridWindow(w);
+        }
+    }
+}
+
+// Flush dirty lines for a single grid window
+fn flushGridWindow(win: *state.WindowData) void {
+    const grid_buf = win.grid_buffer orelse return;
+    const dirty = win.grid_dirty orelse return;
+
+    // Count dirty lines
+    var dirty_count: usize = 0;
+    for (0..win.grid_height) |i| {
+        if (dirty[i]) dirty_count += 1;
+    }
+    if (dirty_count == 0) return;
+
+    // Flush any pending updates first
+    if (pending_content_len > 0 or pending_windows_len > 0 or pending_input_len > 0) {
+        sendUpdate();
+    }
+
+    // Build JSON with lines array format per GlkOte spec
+    // Format: {"type":"update","gen":N,"content":[{"id":N,"lines":[{"line":N,"content":["text"]},...]}]}
+    var buf: [65536]u8 = undefined;
+    var offset: usize = 0;
+
+    // Start of message
+    const header = std.fmt.bufPrint(buf[offset..], "{{\"type\":\"update\",\"gen\":{d},\"content\":[{{\"id\":{d},\"lines\":[", .{ generation, win.id }) catch return;
+    offset += header.len;
+
+    var first_line = true;
+    for (0..win.grid_height) |row| {
+        if (!dirty[row]) continue;
+
+        // Find the end of meaningful content (trim trailing spaces)
+        var line_end: usize = win.grid_width;
+        while (line_end > 0 and grid_buf[row][line_end - 1] == ' ') {
+            line_end -= 1;
+        }
+
+        // Comma before all but the first line
+        if (!first_line) {
+            if (offset < buf.len) {
+                buf[offset] = ',';
+                offset += 1;
+            }
+        }
+        first_line = false;
+
+        // Start line object
+        const line_start = std.fmt.bufPrint(buf[offset..], "{{\"line\":{d},\"content\":[\"", .{row}) catch return;
+        offset += line_start.len;
+
+        // Escape and add the line content
+        var escaped_buf: [1024]u8 = undefined;
+        const escaped = jsonEscapeString(grid_buf[row][0..line_end], &escaped_buf);
+        if (offset + escaped.len < buf.len) {
+            @memcpy(buf[offset..][0..escaped.len], escaped);
+            offset += escaped.len;
+        }
+
+        // Close line object
+        const line_end_str = "\"]}";
+        if (offset + line_end_str.len < buf.len) {
+            @memcpy(buf[offset..][0..line_end_str.len], line_end_str);
+            offset += line_end_str.len;
+        }
+
+        // Mark line as clean
+        dirty[row] = false;
+    }
+
+    // Close the message
+    // Close: lines array "]", content object "}", content array "]", root object "}"
+    const footer = "]}]}";
+    if (offset + footer.len < buf.len) {
+        @memcpy(buf[offset..][0..footer.len], footer);
+        offset += footer.len;
+    }
+
+    writeStdout(buf[0..offset]);
+    writeStdout("\n");
+    generation += 1;
+}
+
+// Send buffer window text with proper paragraph structure per GlkOte spec
+// Format: {"id": N, "text": [{"append": true, "content": ["escaped text"]}]}
+pub fn sendBufferTextUpdate(win_id: u32, text: []const u8, clear: bool) void {
+    // Flush any other pending updates first
+    if (pending_content_len > 0 or pending_windows_len > 0 or pending_input_len > 0) {
+        sendUpdate();
+    }
+
+    // Escape the text for JSON
+    var escaped_buf: [16384]u8 = undefined;
+    const escaped_text = jsonEscapeString(text, &escaped_buf);
+
+    var buf: [32768]u8 = undefined;
+    const json = if (clear)
+        std.fmt.bufPrint(&buf,
+            \\{{"type":"update","gen":{d},"content":[{{"id":{d},"clear":true,"text":[{{"append":true,"content":["{s}"]}}]}}]}}
+        , .{ generation, win_id, escaped_text }) catch return
+    else
+        std.fmt.bufPrint(&buf,
+            \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"append":true,"content":["{s}"]}}]}}]}}
+        , .{ generation, win_id, escaped_text }) catch return;
+
+    writeStdout(json);
+    writeStdout("\n");
+    generation += 1;
 }
 
 pub fn ensureGlkInitialized() void {
@@ -325,19 +533,42 @@ pub fn ensureGlkInitialized() void {
         };
 
         // Parse the init event
-        if (parseInputEvent(line)) |event| {
-            if (std.mem.eql(u8, event.type, "init")) {
-                if (event.metrics) |m| {
-                    if (m.width) |w| state.client_metrics.width = w;
-                    if (m.height) |h| state.client_metrics.height = h;
-                }
-            }
-            // Free the type string we allocated
-            allocator.free(event.type);
-            if (event.value) |v| allocator.free(v);
+        const parsed = std.json.parseFromSlice(InputEvent, allocator, line, .{
+            .ignore_unknown_fields = true,
+        }) catch {
+            sendError("Invalid init message");
+            return;
+        };
+        defer parsed.deinit();
+
+        const event = parsed.value;
+        if (!std.mem.eql(u8, event.type, "init")) {
+            sendError("Expected init message");
+            return;
         }
 
-        // Send our init response
-        sendInitResponse();
+        // Store client metrics
+        if (event.metrics) |m| {
+            if (m.width) |w| state.client_metrics.width = w;
+            if (m.height) |h| state.client_metrics.height = h;
+        }
+
+        // Parse client capabilities from support array
+        if (event.support) |support| {
+            for (support) |feature| {
+                if (std.mem.eql(u8, feature, "timer")) {
+                    state.client_support.timer = true;
+                } else if (std.mem.eql(u8, feature, "graphics")) {
+                    state.client_support.graphics = true;
+                } else if (std.mem.eql(u8, feature, "graphicswin")) {
+                    state.client_support.graphicswin = true;
+                } else if (std.mem.eql(u8, feature, "hyperlinks")) {
+                    state.client_support.hyperlinks = true;
+                }
+            }
+        }
+
+        // Per RemGLK spec: interpreter responds with "update", not "init"
+        // The first sendUpdate() call from the game will serve as the response
     }
 }

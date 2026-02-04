@@ -19,6 +19,9 @@ let client: Awaited<ReturnType<typeof createClient>> | null = null;
 // Track windows by ID and type
 const windows = new Map<number, { type: 'buffer' | 'grid' | 'graphics' | 'pair' }>();
 
+// Track initialization state
+let initialized = false;
+
 // Check JSPI support
 function checkJSPISupport(): { supported: boolean; reason?: string } {
   try {
@@ -59,10 +62,6 @@ function disableInput(): void {
 // Handle updates from the interpreter
 function handleUpdate(update: ClientUpdate): void {
   switch (update.type) {
-    case 'init':
-      setStatus('Game initialized!', 'success');
-      break;
-
     case 'content': {
       const win = windows.get(update.windowId);
       const isGrid = win?.type === 'grid';
@@ -101,6 +100,11 @@ function handleUpdate(update: ClientUpdate): void {
       // Track window types
       for (const win of update.windows) {
         windows.set(win.id, { type: win.type });
+      }
+      // First window update means the game is initialized
+      if (!initialized) {
+        initialized = true;
+        setStatus('Game initialized!', 'success');
       }
       break;
 

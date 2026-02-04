@@ -15,6 +15,10 @@ pub const allocator = std.heap.c_allocator;
 
 pub const StreamType = enum { window, memory, file };
 
+// Maximum grid window dimensions (in character cells)
+pub const MAX_GRID_WIDTH = 256;
+pub const MAX_GRID_HEIGHT = 128;
+
 pub const WindowData = struct {
     id: glui32,
     rock: glui32,
@@ -36,6 +40,13 @@ pub const WindowData = struct {
     line_buffer_rock: DispatchRock = .{ .num = 0 },
     // Dispatch rock for Glulxe
     dispatch_rock: DispatchRock = .{ .num = 0 },
+    // Grid window state (cursor position and content buffer)
+    cursor_x: glui32 = 0,
+    cursor_y: glui32 = 0,
+    grid_width: glui32 = 80,
+    grid_height: glui32 = 24,
+    grid_buffer: ?*[MAX_GRID_HEIGHT][MAX_GRID_WIDTH]u8 = null,
+    grid_dirty: ?*[MAX_GRID_HEIGHT]bool = null, // Track which lines have been modified
     // Linked list
     prev: ?*WindowData = null,
     next: ?*WindowData = null,
@@ -105,6 +116,14 @@ pub var glk_initialized: bool = false;
 pub var client_metrics: struct {
     width: u32 = 80,
     height: u32 = 24,
+} = .{};
+
+// Client capabilities (populated from init message's support array)
+pub var client_support: struct {
+    timer: bool = false,
+    graphics: bool = false,
+    graphicswin: bool = false,
+    hyperlinks: bool = false,
 } = .{};
 
 // Working directory for glkunix
