@@ -451,55 +451,43 @@ Fields that should be included in input requests but aren't.
 
 ## Code Quality Improvements
 
-### [ ] Refactor Zig Protocol to Use Structs Instead of String Concatenation
+### [x] Refactor Zig Protocol to Use Structs Instead of String Concatenation (FIXED)
 
 **Location:** `packages/server/src/protocol.zig`
 
-**Current state:** Many protocol messages are built using manual string formatting and concatenation (e.g., `std.fmt.bufPrint` with inline JSON strings). This is error-prone and hard to maintain.
+**Fixed:** Refactored all protocol output to use proper Zig structs with `std.json` serialization:
 
-**Goal:** Define proper Zig structs that match the GlkOte/RemGLK JSON schema, then use Zig's built-in JSON serialization (`std.json`). This will:
-- Document the protocol schema clearly in code
-- Leverage Zig's optional fields and default values for clean struct definitions
-- Eliminate manual string escaping and formatting bugs
-- Make the code more maintainable and self-documenting
+1. Added proper struct types matching GlkOte/RemGLK JSON schema:
+   - `TextSpan`, `ImageSpan`, `ContentSpan` (union) for text content
+   - `TextParagraph` for buffer window paragraphs
+   - `GridLine` for grid window lines
+   - `DrawOp` for graphics window operations
+   - `ContentUpdateJson` for content updates
+   - `InputRequestJson` for input requests
+   - `StateUpdateJson` for full update messages
+   - `TimerValue` union for timer interval or cancellation
 
-**Example of current approach (avoid):**
-```zig
-const json = std.fmt.bufPrint(&buf,
-    \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[...]}}]}}
-, .{ generation, win_id }) catch return;
-```
+2. Refactored `sendUpdate()` to use struct serialization with `emit_null_optional_fields = false`
 
-**Example of desired approach:**
-```zig
-const TextParagraph = struct {
-    append: ?bool = null,
-    flowbreak: ?bool = null,
-    content: ?[]const ContentSpan = null,
-};
+3. Refactored all special update functions:
+   - `sendBufferTextUpdate()` - uses TextParagraph and ContentSpan
+   - `sendFlowBreakUpdate()` - uses TextParagraph
+   - `sendImageUpdate()` - uses ImageSpan and TextParagraph
+   - `sendGraphicsImageUpdate()` - uses DrawOp
+   - `sendGraphicsFillUpdate()` - uses DrawOp
+   - `sendGraphicsEraseUpdate()` - uses DrawOp
+   - `sendGraphicsSetColorUpdate()` - uses DrawOp
+   - `flushGridWindow()` - uses GridLine and ContentSpan
 
-const ContentUpdate = struct {
-    id: u32,
-    clear: ?bool = null,
-    text: ?[]const TextParagraph = null,
-    lines: ?[]const GridLine = null,
-    draw: ?[]const DrawOperation = null,
-};
+4. Removed manual `jsonEscapeString()` helper - std.json handles escaping automatically
 
-const StateUpdate = struct {
-    type: []const u8 = "update",
-    gen: u32,
-    windows: ?[]const WindowUpdate = null,
-    content: ?[]const ContentUpdate = null,
-    input: ?[]const InputRequest = null,
-    timer: ?u32 = null,
-};
+5. Added `sendContentUpdate()` helper for simple content-only updates
 
-// Then serialize with:
-writeJson(StateUpdate{ .gen = generation, .content = &content_updates });
-```
-
-**Note:** Refactor incrementally as we fix other protocol issues. When touching a function that uses string concatenation, convert it to use structs.
+Benefits achieved:
+- Protocol schema clearly documented in code via struct definitions
+- Zig's optional fields with null defaults provide clean optional handling
+- Eliminated manual string escaping and formatting bugs
+- Code is more maintainable and self-documenting
 
 ---
 

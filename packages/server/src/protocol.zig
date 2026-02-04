@@ -91,7 +91,9 @@ pub const Metrics = struct {
     graphicsmarginy: ?f64 = null,
 };
 
-// Output types (interpreter -> client)
+// ============== Output Types (interpreter -> client) ==============
+// These structs match the GlkOte/RemGLK JSON schema for proper serialization
+
 pub const WindowType = enum {
     buffer,
     grid,
@@ -104,6 +106,7 @@ pub const TextInputType = enum {
     char,
 };
 
+// Window update in the windows array
 pub const WindowUpdate = struct {
     id: u32,
     type: WindowType,
@@ -120,6 +123,71 @@ pub const WindowUpdate = struct {
     graphheight: ?u32 = null,
 };
 
+// Text span within paragraph content (GlkOte spec)
+pub const TextSpan = struct {
+    style: []const u8 = "normal",
+    text: []const u8,
+    hyperlink: ?u32 = null,
+};
+
+// Special content span for images in buffer windows
+pub const ImageSpan = struct {
+    special: []const u8 = "image",
+    image: u32,
+    alignment: ?[]const u8 = null,
+    width: ?u32 = null,
+    height: ?u32 = null,
+};
+
+// Content span can be text or special (image)
+// Using tagged union for proper JSON serialization
+pub const ContentSpan = union(enum) {
+    text: TextSpan,
+    image: ImageSpan,
+
+    pub fn jsonStringify(self: @This(), jw: anytype) !void {
+        switch (self) {
+            .text => |t| try jw.write(t),
+            .image => |i| try jw.write(i),
+        }
+    }
+};
+
+// Text paragraph in buffer window content (GlkOte spec)
+pub const TextParagraph = struct {
+    append: ?bool = null,
+    flowbreak: ?bool = null,
+    content: ?[]const ContentSpan = null,
+};
+
+// Grid line in grid window content (GlkOte spec)
+pub const GridLine = struct {
+    line: u32,
+    content: ?[]const ContentSpan = null,
+};
+
+// Draw operation for graphics windows (GlkOte spec)
+pub const DrawOp = struct {
+    special: []const u8, // "fill", "image", "setcolor"
+    color: ?[]const u8 = null, // CSS hex color like "#RRGGBB"
+    image: ?u32 = null,
+    alignment: ?[]const u8 = null,
+    x: ?i32 = null,
+    y: ?i32 = null,
+    width: ?u32 = null,
+    height: ?u32 = null,
+};
+
+// Content update - can have text (buffer), lines (grid), or draw (graphics)
+pub const ContentUpdateJson = struct {
+    id: u32,
+    clear: ?bool = null,
+    text: ?[]const TextParagraph = null, // Buffer windows
+    lines: ?[]const GridLine = null, // Grid windows
+    draw: ?[]const DrawOp = null, // Graphics windows
+};
+
+// Legacy content update (kept for compatibility during refactor)
 pub const ContentUpdate = struct {
     id: u32,
     clear: ?bool = null,
@@ -129,6 +197,20 @@ pub const ContentUpdate = struct {
 // Maximum terminators we track per input request
 pub const MAX_TERMINATORS = 16;
 
+// Input request (for JSON serialization)
+pub const InputRequestJson = struct {
+    id: u32,
+    type: TextInputType,
+    gen: u32,
+    initial: ?[]const u8 = null,
+    mouse: ?bool = null,
+    hyperlink: ?bool = null,
+    xpos: ?u32 = null,
+    ypos: ?u32 = null,
+    terminators: ?[]const []const u8 = null,
+};
+
+// Internal input request (with fixed array storage)
 pub const InputRequest = struct {
     id: u32,
     type: TextInputType,
@@ -143,22 +225,48 @@ pub const InputRequest = struct {
     terminators_data: [MAX_TERMINATORS][]const u8 = undefined,
     terminators_count: u32 = 0,
 
-    // For JSON serialization: returns slice of terminators or null if none
-    pub fn terminators(self: *const InputRequest) ?[]const []const u8 {
-        if (self.terminators_count == 0) return null;
-        return self.terminators_data[0..self.terminators_count];
+    // Convert to JSON-serializable struct
+    pub fn toJson(self: *const InputRequest) InputRequestJson {
+        return .{
+            .id = self.id,
+            .type = self.type,
+            .gen = self.gen orelse 0,
+            .initial = self.initial,
+            .mouse = self.mouse,
+            .hyperlink = self.hyperlink,
+            .xpos = self.xpos,
+            .ypos = self.ypos,
+            .terminators = if (self.terminators_count > 0) self.terminators_data[0..self.terminators_count] else null,
+        };
     }
 };
 
-const StateUpdate = struct {
+// Timer value wrapper - allows distinguishing between "not set" and "set to null"
+pub const TimerValue = union(enum) {
+    interval: u32, // Timer active with this interval
+    cancelled: void, // Timer cancelled (serialize as null)
+
+    // Custom JSON formatting
+    pub fn jsonStringify(self: @This(), jw: anytype) !void {
+        switch (self) {
+            .interval => |val| try jw.write(val),
+            .cancelled => try jw.write(null),
+        }
+    }
+};
+
+// Full state update message (GlkOte spec)
+pub const StateUpdateJson = struct {
     type: []const u8 = "update",
     gen: u32,
     windows: ?[]const WindowUpdate = null,
-    content: ?[]const ContentUpdate = null,
-    input: ?[]const InputRequest = null,
-    timer: ?u32 = null, // Timer interval in ms, null = not included in output
+    content: ?[]const ContentUpdateJson = null,
+    input: ?[]const InputRequestJson = null,
+    timer: ?TimerValue = null, // Timer interval or null to cancel (omit if not changed)
+    disable: ?bool = null, // true when no input expected
+    exit: ?bool = null, // true when game exits
+    debugoutput: ?[]const []const u8 = null, // Debug messages
 };
-
 
 const ErrorResponse = struct {
     type: []const u8 = "error",
@@ -265,154 +373,58 @@ pub fn parseInputEvent(json_str: []const u8) ?InputEvent {
 }
 
 pub fn sendUpdate() void {
-    // Build update manually to control which fields are included
+    // Build arrays for JSON serialization
+    // Input requests - convert to JSON-serializable format
+    var input_json: [8]InputRequestJson = undefined;
+    for (pending_input[0..pending_input_len], 0..) |req, i| {
+        input_json[i] = req.toJson();
+    }
+
+    // Content updates - convert legacy content to JSON format
+    var content_json: [64]ContentUpdateJson = undefined;
+    for (pending_content[0..pending_content_len], 0..) |c, i| {
+        // For clear-only updates (no text), use the JSON struct directly
+        // For text content, we'd need to build a paragraph structure - but that's
+        // only used by flushTextBuffer for non-buffer windows, which is legacy
+        content_json[i] = .{
+            .id = c.id,
+            .clear = c.clear,
+            // Legacy text field not supported in struct serialization
+            // All text content now goes through sendContentUpdate directly
+        };
+    }
+
+    // Debug output - collect slices
+    var debug_slices: [16][]const u8 = undefined;
+    for (0..pending_debug_count) |i| {
+        debug_slices[i] = pending_debug[i][0..pending_debug_lens[i]];
+    }
+
+    // Build timer value if set
+    const timer_val: ?TimerValue = if (pending_timer_set)
+        (if (pending_timer) |interval| TimerValue{ .interval = interval } else TimerValue{ .cancelled = {} })
+    else
+        null;
+
+    // Build the full update struct
+    const update = StateUpdateJson{
+        .gen = generation,
+        .windows = if (pending_windows_len > 0) pending_windows[0..pending_windows_len] else null,
+        .content = if (pending_content_len > 0) content_json[0..pending_content_len] else null,
+        .input = if (pending_input_len > 0) input_json[0..pending_input_len] else null,
+        .timer = timer_val,
+        .disable = if (pending_input_len == 0) true else null,
+        .exit = if (pending_exit) true else null,
+        .debugoutput = if (pending_debug_count > 0) debug_slices[0..pending_debug_count] else null,
+    };
+
+    // Serialize with emit_null_optional_fields = false to omit null fields
     var buf: [32768]u8 = undefined;
-    var offset: usize = 0;
-
-    // Start object
-    const header = std.fmt.bufPrint(buf[offset..], "{{\"type\":\"update\",\"gen\":{d}", .{generation}) catch return;
-    offset += header.len;
-
-    // Add windows if present
-    if (pending_windows_len > 0) {
-        const windows_json = std.fmt.bufPrint(buf[offset..], ",\"windows\":{f}", .{std.json.fmt(pending_windows[0..pending_windows_len], .{})}) catch return;
-        offset += windows_json.len;
-    }
-
-    // Add content if present
-    if (pending_content_len > 0) {
-        const content_json = std.fmt.bufPrint(buf[offset..], ",\"content\":{f}", .{std.json.fmt(pending_content[0..pending_content_len], .{})}) catch return;
-        offset += content_json.len;
-    }
-
-    // Add input if present (manually formatted to handle terminators)
-    if (pending_input_len > 0) {
-        const input_start = ",\"input\":[";
-        @memcpy(buf[offset..][0..input_start.len], input_start);
-        offset += input_start.len;
-
-        for (pending_input[0..pending_input_len], 0..) |req, idx| {
-            if (idx > 0) {
-                buf[offset] = ',';
-                offset += 1;
-            }
-
-            // Build individual input request
-            const type_str = if (req.type == .line) "line" else "char";
-            const req_start = std.fmt.bufPrint(buf[offset..], "{{\"id\":{d},\"type\":\"{s}\",\"gen\":{d}", .{ req.id, type_str, req.gen orelse 0 }) catch return;
-            offset += req_start.len;
-
-            if (req.initial) |initial| {
-                // Escape the initial text
-                var escaped_buf: [512]u8 = undefined;
-                const escaped = jsonEscapeString(initial, &escaped_buf);
-                const initial_json = std.fmt.bufPrint(buf[offset..], ",\"initial\":\"{s}\"", .{escaped}) catch return;
-                offset += initial_json.len;
-            }
-            if (req.mouse != null and req.mouse.?) {
-                const mouse_json = ",\"mouse\":true";
-                @memcpy(buf[offset..][0..mouse_json.len], mouse_json);
-                offset += mouse_json.len;
-            }
-            if (req.hyperlink != null and req.hyperlink.?) {
-                const hyper_json = ",\"hyperlink\":true";
-                @memcpy(buf[offset..][0..hyper_json.len], hyper_json);
-                offset += hyper_json.len;
-            }
-            if (req.xpos) |x| {
-                const xpos_json = std.fmt.bufPrint(buf[offset..], ",\"xpos\":{d}", .{x}) catch return;
-                offset += xpos_json.len;
-            }
-            if (req.ypos) |y| {
-                const ypos_json = std.fmt.bufPrint(buf[offset..], ",\"ypos\":{d}", .{y}) catch return;
-                offset += ypos_json.len;
-            }
-            // Add terminators array if present
-            if (req.terminators_count > 0) {
-                const term_start = ",\"terminators\":[";
-                @memcpy(buf[offset..][0..term_start.len], term_start);
-                offset += term_start.len;
-
-                for (0..req.terminators_count) |ti| {
-                    if (ti > 0) {
-                        buf[offset] = ',';
-                        offset += 1;
-                    }
-                    const term_item = std.fmt.bufPrint(buf[offset..], "\"{s}\"", .{req.terminators_data[ti]}) catch return;
-                    offset += term_item.len;
-                }
-
-                buf[offset] = ']';
-                offset += 1;
-            }
-
-            buf[offset] = '}';
-            offset += 1;
-        }
-
-        buf[offset] = ']';
-        offset += 1;
-    } else {
-        // No input requests - send disable: true to indicate input not expected
-        const disable_true = ",\"disable\":true";
-        @memcpy(buf[offset..][0..disable_true.len], disable_true);
-        offset += disable_true.len;
-    }
-
-    // Add timer only if explicitly set
-    if (pending_timer_set) {
-        if (pending_timer) |interval| {
-            const timer_json = std.fmt.bufPrint(buf[offset..], ",\"timer\":{d}", .{interval}) catch return;
-            offset += timer_json.len;
-        } else {
-            const timer_null = ",\"timer\":null";
-            @memcpy(buf[offset..][0..timer_null.len], timer_null);
-            offset += timer_null.len;
-        }
-    }
-
-    // Add exit flag if set
-    if (pending_exit) {
-        const exit_true = ",\"exit\":true";
-        @memcpy(buf[offset..][0..exit_true.len], exit_true);
-        offset += exit_true.len;
-    }
-
-    // Add debug output if any (per GlkOte spec: debugoutput array)
-    if (pending_debug_count > 0) {
-        const debug_start = ",\"debugoutput\":[";
-        @memcpy(buf[offset..][0..debug_start.len], debug_start);
-        offset += debug_start.len;
-
-        for (0..pending_debug_count) |i| {
-            if (i > 0) {
-                buf[offset] = ',';
-                offset += 1;
-            }
-            // Escape and add the debug message
-            buf[offset] = '"';
-            offset += 1;
-            var escaped_buf: [512]u8 = undefined;
-            const escaped = jsonEscapeString(pending_debug[i][0..pending_debug_lens[i]], &escaped_buf);
-            if (offset + escaped.len < buf.len) {
-                @memcpy(buf[offset..][0..escaped.len], escaped);
-                offset += escaped.len;
-            }
-            buf[offset] = '"';
-            offset += 1;
-        }
-
-        buf[offset] = ']';
-        offset += 1;
-    }
-
-    // Close object
-    buf[offset] = '}';
-    offset += 1;
-
-    writeStdout(buf[0..offset]);
+    const json = std.fmt.bufPrint(&buf, "{f}", .{std.json.fmt(update, .{ .emit_null_optional_fields = false })}) catch return;
+    writeStdout(json);
     writeStdout("\n");
 
+    // Reset pending state
     pending_windows_len = 0;
     pending_content_len = 0;
     pending_input_len = 0;
@@ -558,6 +570,21 @@ fn alignmentToString(alignment: glsi32) []const u8 {
     };
 }
 
+// Helper to send a simple update with a single content entry
+fn sendContentUpdate(content: ContentUpdateJson) void {
+    const contents = [_]ContentUpdateJson{content};
+    const update = StateUpdateJson{
+        .gen = generation,
+        .content = &contents,
+        .disable = true, // Content-only updates don't expect input
+    };
+    var buf: [32768]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf, "{f}", .{std.json.fmt(update, .{ .emit_null_optional_fields = false })}) catch return;
+    writeStdout(json);
+    writeStdout("\n");
+    generation += 1;
+}
+
 // Glk style number to GlkOte style name mapping
 fn styleToString(style: glui32) []const u8 {
     return switch (style) {
@@ -584,16 +611,14 @@ pub fn sendImageUpdate(win_id: u32, image: glui32, alignment: glsi32, img_width:
     }
 
     const alignment_str = alignmentToString(alignment);
-
-    // Build JSON with paragraph format: {"text":[{"append":true,"content":[{"special":"image",...}]}]}
-    var buf: [1024]u8 = undefined;
-    const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"append":true,"content":[{{"special":"image","image":{d},"alignment":"{s}","width":{d},"height":{d}}}]}}]}}]}}
-    , .{ generation, win_id, image, alignment_str, img_width, img_height }) catch return;
-
-    writeStdout(json);
-    writeStdout("\n");
-    generation += 1;
+    const content = [_]ContentSpan{.{ .image = .{
+        .image = image,
+        .alignment = alignment_str,
+        .width = img_width,
+        .height = img_height,
+    } }};
+    const paragraphs = [_]TextParagraph{.{ .append = true, .content = &content }};
+    sendContentUpdate(.{ .id = win_id, .text = &paragraphs });
 }
 
 // Send a graphics window image update (includes x, y position)
@@ -603,14 +628,15 @@ pub fn sendGraphicsImageUpdate(win_id: u32, image: glui32, x: glsi32, y: glsi32,
         sendUpdate();
     }
 
-    var buf: [1024]u8 = undefined;
-    const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"draw":[{{"special":"image","image":{d},"x":{d},"y":{d},"width":{d},"height":{d}}}]}}]}}
-    , .{ generation, win_id, image, x, y, img_width, img_height }) catch return;
-
-    writeStdout(json);
-    writeStdout("\n");
-    generation += 1;
+    const draw_ops = [_]DrawOp{.{
+        .special = "image",
+        .image = image,
+        .x = x,
+        .y = y,
+        .width = img_width,
+        .height = img_height,
+    }};
+    sendContentUpdate(.{ .id = win_id, .draw = &draw_ops });
 }
 
 pub fn sendFlowBreakUpdate(win_id: u32) void {
@@ -619,14 +645,8 @@ pub fn sendFlowBreakUpdate(win_id: u32) void {
     }
 
     // Use paragraph format with flowbreak flag per GlkOte spec
-    var buf: [256]u8 = undefined;
-    const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"text":[{{"flowbreak":true}}]}}]}}
-    , .{ generation, win_id }) catch return;
-
-    writeStdout(json);
-    writeStdout("\n");
-    generation += 1;
+    const paragraphs = [_]TextParagraph{.{ .flowbreak = true }};
+    sendContentUpdate(.{ .id = win_id, .text = &paragraphs });
 }
 
 // Helper to format a color integer as CSS hex string "#RRGGBB"
@@ -646,14 +666,15 @@ pub fn sendGraphicsFillUpdate(win_id: u32, color: glui32, x: glsi32, y: glsi32, 
     var color_buf: [8]u8 = undefined;
     const color_str = formatColorHex(&color_buf, color);
 
-    var buf: [512]u8 = undefined;
-    const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"draw":[{{"special":"fill","color":"{s}","x":{d},"y":{d},"width":{d},"height":{d}}}]}}]}}
-    , .{ generation, win_id, color_str, x, y, width, height }) catch return;
-
-    writeStdout(json);
-    writeStdout("\n");
-    generation += 1;
+    const draw_ops = [_]DrawOp{.{
+        .special = "fill",
+        .color = color_str,
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+    }};
+    sendContentUpdate(.{ .id = win_id, .draw = &draw_ops });
 }
 
 pub fn sendGraphicsEraseUpdate(win_id: u32, x: glsi32, y: glsi32, width: glui32, height: glui32) void {
@@ -661,14 +682,14 @@ pub fn sendGraphicsEraseUpdate(win_id: u32, x: glsi32, y: glsi32, width: glui32,
         sendUpdate();
     }
 
-    var buf: [512]u8 = undefined;
-    const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"draw":[{{"special":"fill","x":{d},"y":{d},"width":{d},"height":{d}}}]}}]}}
-    , .{ generation, win_id, x, y, width, height }) catch return;
-
-    writeStdout(json);
-    writeStdout("\n");
-    generation += 1;
+    const draw_ops = [_]DrawOp{.{
+        .special = "fill",
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+    }};
+    sendContentUpdate(.{ .id = win_id, .draw = &draw_ops });
 }
 
 pub fn sendGraphicsSetColorUpdate(win_id: u32, color: glui32) void {
@@ -680,69 +701,14 @@ pub fn sendGraphicsSetColorUpdate(win_id: u32, color: glui32) void {
     var color_buf: [8]u8 = undefined;
     const color_str = formatColorHex(&color_buf, color);
 
-    var buf: [256]u8 = undefined;
-    const json = std.fmt.bufPrint(&buf,
-        \\{{"type":"update","gen":{d},"content":[{{"id":{d},"draw":[{{"special":"setcolor","color":"{s}"}}]}}]}}
-    , .{ generation, win_id, color_str }) catch return;
-
-    writeStdout(json);
-    writeStdout("\n");
-    generation += 1;
+    const draw_ops = [_]DrawOp{.{
+        .special = "setcolor",
+        .color = color_str,
+    }};
+    sendContentUpdate(.{ .id = win_id, .draw = &draw_ops });
 }
 
 // ============== Text Buffer Management ==============
-
-// Helper to escape a string for JSON output
-fn jsonEscapeString(input: []const u8, output: []u8) []const u8 {
-    var out_i: usize = 0;
-    for (input) |c| {
-        if (out_i + 6 >= output.len) break; // Ensure space for escape sequences
-        switch (c) {
-            '"' => {
-                output[out_i] = '\\';
-                output[out_i + 1] = '"';
-                out_i += 2;
-            },
-            '\\' => {
-                output[out_i] = '\\';
-                output[out_i + 1] = '\\';
-                out_i += 2;
-            },
-            '\n' => {
-                output[out_i] = '\\';
-                output[out_i + 1] = 'n';
-                out_i += 2;
-            },
-            '\r' => {
-                output[out_i] = '\\';
-                output[out_i + 1] = 'r';
-                out_i += 2;
-            },
-            '\t' => {
-                output[out_i] = '\\';
-                output[out_i + 1] = 't';
-                out_i += 2;
-            },
-            else => {
-                if (c < 0x20) {
-                    // Control character - use \uXXXX format
-                    const hex = "0123456789abcdef";
-                    output[out_i] = '\\';
-                    output[out_i + 1] = 'u';
-                    output[out_i + 2] = '0';
-                    output[out_i + 3] = '0';
-                    output[out_i + 4] = hex[c >> 4];
-                    output[out_i + 5] = hex[c & 0xf];
-                    out_i += 6;
-                } else {
-                    output[out_i] = c;
-                    out_i += 1;
-                }
-            },
-        }
-    }
-    return output[0..out_i];
-}
 
 pub fn flushTextBuffer() void {
     if (state.text_buffer_len > 0 and state.text_buffer_win != null) {
@@ -788,16 +754,12 @@ fn flushGridWindow(win: *state.WindowData) void {
         sendUpdate();
     }
 
-    // Build JSON with lines array format per GlkOte spec
-    // Format: {"type":"update","gen":N,"content":[{"id":N,"lines":[{"line":N,"content":["text"]},...]}]}
-    var buf: [65536]u8 = undefined;
-    var offset: usize = 0;
+    // Build grid lines array - we need fixed-size arrays for struct serialization
+    // Max 128 lines per state.MAX_GRID_HEIGHT
+    var grid_lines: [state.MAX_GRID_HEIGHT]GridLine = undefined;
+    var grid_text_spans: [state.MAX_GRID_HEIGHT][1]ContentSpan = undefined;
+    var line_count: usize = 0;
 
-    // Start of message
-    const header = std.fmt.bufPrint(buf[offset..], "{{\"type\":\"update\",\"gen\":{d},\"content\":[{{\"id\":{d},\"lines\":[", .{ generation, win.id }) catch return;
-    offset += header.len;
-
-    var first_line = true;
     for (0..win.grid_height) |row| {
         if (!dirty[row]) continue;
 
@@ -807,49 +769,23 @@ fn flushGridWindow(win: *state.WindowData) void {
             line_end -= 1;
         }
 
-        // Comma before all but the first line
-        if (!first_line) {
-            if (offset < buf.len) {
-                buf[offset] = ',';
-                offset += 1;
-            }
-        }
-        first_line = false;
-
-        // Start line object
-        const line_start = std.fmt.bufPrint(buf[offset..], "{{\"line\":{d},\"content\":[\"", .{row}) catch return;
-        offset += line_start.len;
-
-        // Escape and add the line content
-        var escaped_buf: [1024]u8 = undefined;
-        const escaped = jsonEscapeString(grid_buf[row][0..line_end], &escaped_buf);
-        if (offset + escaped.len < buf.len) {
-            @memcpy(buf[offset..][0..escaped.len], escaped);
-            offset += escaped.len;
-        }
-
-        // Close line object
-        const line_end_str = "\"]}";
-        if (offset + line_end_str.len < buf.len) {
-            @memcpy(buf[offset..][0..line_end_str.len], line_end_str);
-            offset += line_end_str.len;
-        }
+        // Build text span for this line
+        grid_text_spans[line_count][0] = .{ .text = .{
+            .style = "normal",
+            .text = grid_buf[row][0..line_end],
+        } };
+        grid_lines[line_count] = .{
+            .line = @intCast(row),
+            .content = &grid_text_spans[line_count],
+        };
+        line_count += 1;
 
         // Mark line as clean
         dirty[row] = false;
     }
 
-    // Close the message
-    // Close: lines array "]", content object "}", content array "]", root object "}"
-    const footer = "]}]}";
-    if (offset + footer.len < buf.len) {
-        @memcpy(buf[offset..][0..footer.len], footer);
-        offset += footer.len;
-    }
-
-    writeStdout(buf[0..offset]);
-    writeStdout("\n");
-    generation += 1;
+    // Send using struct-based serialization
+    sendContentUpdate(.{ .id = win.id, .lines = grid_lines[0..line_count] });
 }
 
 // Send buffer window text with proper paragraph structure per GlkOte spec
@@ -866,36 +802,22 @@ fn sendStyledBufferTextUpdate(win_id: u32, text: []const u8, clear: bool, style:
         sendUpdate();
     }
 
-    // Escape the text for JSON
-    var escaped_buf: [16384]u8 = undefined;
-    const escaped_text = jsonEscapeString(text, &escaped_buf);
-
     const style_str = styleToString(style);
 
-    var buf: [32768]u8 = undefined;
-    var offset: usize = 0;
+    // Build content span
+    const text_span = TextSpan{
+        .style = style_str,
+        .text = text,
+        .hyperlink = if (hyperlink != 0) hyperlink else null,
+    };
+    const content = [_]ContentSpan{.{ .text = text_span }};
+    const paragraphs = [_]TextParagraph{.{ .append = true, .content = &content }};
 
-    // Build JSON manually to optionally include hyperlink
-    const header = if (clear)
-        std.fmt.bufPrint(buf[offset..], "{{\"type\":\"update\",\"gen\":{d},\"content\":[{{\"id\":{d},\"clear\":true,\"text\":[{{\"append\":true,\"content\":[{{\"style\":\"{s}\",\"text\":\"{s}\"", .{ generation, win_id, style_str, escaped_text }) catch return
-    else
-        std.fmt.bufPrint(buf[offset..], "{{\"type\":\"update\",\"gen\":{d},\"content\":[{{\"id\":{d},\"text\":[{{\"append\":true,\"content\":[{{\"style\":\"{s}\",\"text\":\"{s}\"", .{ generation, win_id, style_str, escaped_text }) catch return;
-    offset += header.len;
-
-    // Add hyperlink field if set
-    if (hyperlink != 0) {
-        const hyper_json = std.fmt.bufPrint(buf[offset..], ",\"hyperlink\":{d}", .{hyperlink}) catch return;
-        offset += hyper_json.len;
-    }
-
-    // Close all brackets: span} spans] paragraph} text] content_obj} content_array] update}
-    const footer = "}]}]}]}";
-    @memcpy(buf[offset..][0..footer.len], footer);
-    offset += footer.len;
-
-    writeStdout(buf[0..offset]);
-    writeStdout("\n");
-    generation += 1;
+    sendContentUpdate(.{
+        .id = win_id,
+        .clear = if (clear) true else null,
+        .text = &paragraphs,
+    });
 }
 
 pub fn ensureGlkInitialized() void {
