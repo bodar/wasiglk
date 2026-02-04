@@ -33,10 +33,15 @@ pub const stream_result_t = extern struct {
     writecount: glui32,
 };
 
-// Dispatch rock type (matches gidispatch_rock_t)
+// Dispatch rock type (matches gidispatch_rock_t in gi_dispa.h)
+// IMPORTANT: Must include dummy_variant to ensure 8-byte size on WASM32,
+// matching the C union which has an int64_t member for Rust compatibility.
+// Without this, the union would be 4 bytes on WASM32 vs 8 bytes in C,
+// causing ABI mismatch and memory corruption.
 pub const DispatchRock = extern union {
     num: glui32,
     ptr: ?*anyopaque,
+    dummy_variant: i64,
 };
 
 // ============== Glk Constants ==============

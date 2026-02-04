@@ -7,7 +7,8 @@ pub const glui32 = types.glui32;
 pub const glsi32 = types.glsi32;
 pub const DispatchRock = types.DispatchRock;
 
-// Use C allocator to avoid conflicts with C code's malloc/free
+// Use C allocator to be compatible with C code's malloc/free
+// Note: There's a known issue with free() causing hangs in WASM - see stream.zig glk_stream_close
 pub const allocator = std.heap.c_allocator;
 
 // ============== Internal Data Structures ==============
@@ -52,6 +53,8 @@ pub const StreamData = struct {
     buflen: glui32 = 0,
     bufptr: glui32 = 0,
     is_unicode: bool = false,
+    // Retained array rock for memory buffer (for dispatch layer copy-back)
+    buf_rock: DispatchRock = .{ .num = 0 },
     // File stream
     file: ?std.fs.File = null,
     // Associated window

@@ -112,7 +112,18 @@ export fn glk_stream_open_memory(buf: ?[*]u8, buflen: glui32, fmode: glui32, roc
     if (state.stream_list) |list| list.prev = stream;
     state.stream_list = stream;
 
-    // Register with dispatch system
+    // Register buffer with retained registry so Glulxe knows not to free it
+    if (buf != null and buflen > 0) {
+        if (dispatch.retained_register_fn) |register_fn| {
+            // Typecode format: prefix chars + type + subtype
+            // typecode[4] must be 'C' or 'I' for glulxe_retained_register to work
+            // Use "&+#!Cn" format: & (ref), + (passout), # (array), ! (retained), C (char), n (subtype)
+            var typecode = "&+#!Cn".*;
+            stream.buf_rock = register_fn(@ptrCast(buf), buflen, &typecode);
+        }
+    }
+
+    // Register stream with dispatch system
     if (dispatch.object_register_fn) |register_fn| {
         stream.dispatch_rock = register_fn(@ptrCast(stream), dispatch.gidisp_Class_Stream);
     }
@@ -141,7 +152,16 @@ export fn glk_stream_open_memory_uni(buf: ?[*]glui32, buflen: glui32, fmode: glu
     if (state.stream_list) |list| list.prev = stream;
     state.stream_list = stream;
 
-    // Register with dispatch system
+    // Register buffer with retained registry so Glulxe knows not to free it
+    if (buf != null and buflen > 0) {
+        if (dispatch.retained_register_fn) |register_fn| {
+            // typecode[4] must be 'I' for glulxe_retained_register to work with unicode
+            var typecode = "&+#!Iu".*;
+            stream.buf_rock = register_fn(@ptrCast(buf), buflen, &typecode);
+        }
+    }
+
+    // Register stream with dispatch system
     if (dispatch.object_register_fn) |register_fn| {
         stream.dispatch_rock = register_fn(@ptrCast(stream), dispatch.gidisp_Class_Stream);
     }
@@ -195,7 +215,24 @@ pub export fn glk_stream_close(str_opaque: strid_t, result: ?*stream_result_t) c
 
     if (state.current_stream == s) state.current_stream = null;
 
-    // Unregister from dispatch system
+    // Unregister memory buffer from retained registry (must be before object unregister)
+    if (s.stream_type == .memory) {
+        if (dispatch.retained_unregister_fn) |unregister_fn| {
+            if (s.is_unicode) {
+                if (s.buf_uni) |buf| {
+                    var typecode = "&+#!Iu".*;
+                    unregister_fn(@ptrCast(buf), s.buflen, &typecode, s.buf_rock);
+                }
+            } else {
+                if (s.buf) |buf| {
+                    var typecode = "&+#!Cn".*;
+                    unregister_fn(@ptrCast(buf), s.buflen, &typecode, s.buf_rock);
+                }
+            }
+        }
+    }
+
+    // Unregister stream from dispatch system
     if (dispatch.object_unregister_fn) |unregister_fn| {
         unregister_fn(@ptrCast(s), dispatch.gidisp_Class_Stream, s.dispatch_rock);
     }
