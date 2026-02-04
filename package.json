@@ -1,0 +1,44 @@
+{
+  "name": "emglken",
+  "version": "0.7.0",
+  "description": "Glk meets Emscripten",
+  "author": "Dannii Willis <curiousdannii@gmail.com>",
+  "license": "GPL-2.0",
+  "keywords": [
+    "interactive fiction",
+    "interactive-fiction"
+  ],
+  "repository": "curiousdannii/emglken",
+  "bugs": "https://github.com/curiousdannii/emglken/issues",
+  "homepage": "https://github.com/curiousdannii/emglken",
+  "type": "module",
+  "engines" : {
+    "node" : ">=20.0.0"
+  },
+  "main": "src/index.js",
+  "bin": {
+    "emglken": "bin/emglken.js"
+  },
+  "dependencies": {
+    "lodash-es": "^4.17.21",
+    "minimist": "^1.2.6",
+    "mute-stream": "2.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "eslint": "^9.0.0"
+  },
+  "scripts": {
+    "build": "./build.sh",
+    "lint": "eslint bin/ src/",
+    "test": "./tests/runtests.sh"
+  },
+  "files": [
+    "bin/emglken.js",
+    "build/*.js",
+    "build/*.json",
+    "build/*.wasm",
+    "src/index.js",
+    "versions.json"
+  ]
+}

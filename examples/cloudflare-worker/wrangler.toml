@@ -1,0 +1,51 @@
+# Cloudflare Worker configuration for Emglken WASI interpreters
+# See: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "emglken-if"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Account ID (set via environment or wrangler login)
+# account_id = "your-account-id"
+
+# Optional: Use KV for session storage
+# [[kv_namespaces]]
+# binding = "SESSIONS"
+# id = "your-kv-namespace-id"
+
+# Optional: Use Durable Objects for persistent sessions
+# [durable_objects]
+# bindings = [
+#   { name = "GAME_SESSIONS", class_name = "GameSession" }
+# ]
+
+# WASM module bindings
+# [[wasm_modules]]
+# name = "GLULXE"
+# path = "../../zig-out/bin/glulxe.wasm"
+
+# [[wasm_modules]]
+# name = "GIT"
+# path = "../../zig-out/bin/git.wasm"
+
+# [[wasm_modules]]
+# name = "HUGO"
+# path = "../../zig-out/bin/hugo.wasm"
+
+# [[wasm_modules]]
+# name = "BOCFEL"
+# path = "../../zig-out/bin/bocfel.wasm"
+
+# [[wasm_modules]]
+# name = "SCARE"
+# path = "../../zig-out/bin/scare.wasm"
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Build configuration
+[build]
+command = "cd ../.. && zig build -Doptimize=ReleaseSmall"
+watch_dir = ["src", "glulxe", "git", "hugo", "garglk"]

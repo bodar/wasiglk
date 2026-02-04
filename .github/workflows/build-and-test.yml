@@ -1,0 +1,38 @@
+name: build-and-test
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: |
+            build/*.js
+            build/*.wasm
+
+  test:
+    needs: build
+    strategy:
+      matrix:
+        node: [20, 22, 24, 25]
+    name: test (Node v${{ matrix.node }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: build
+      - run: npm install
+      - run: npm run lint
+      - run: npm test
