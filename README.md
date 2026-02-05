@@ -2,6 +2,16 @@
 
 **Work in Progress** - Interactive Fiction interpreters compiled to WebAssembly (WASI) using Zig.
 
+## Why WASI?
+
+Targeting [WASI](https://wasi.dev/) (WebAssembly System Interface) instead of Emscripten's custom runtime gives several advantages:
+
+- **Portable binaries** - The same `.wasm` file runs in browsers (via a WASI shim), Node.js, Bun, Deno, and standalone runtimes like Wasmtime and Wasmer
+- **No JavaScript glue code** - Emscripten generates a large JS runtime alongside the WASM. WASI binaries are self-contained, with only a thin shim needed at runtime
+- **Smaller output** - Without bundled runtime support, binaries are 76-86% smaller (see comparison below)
+- **First-class Zig support** - Zig can target `wasm32-wasi` natively, making cross-compilation straightforward without Emscripten's toolchain complexity
+- **Standard interface** - WASI is a W3C standard with broad industry backing, rather than a project-specific runtime
+
 ## Overview
 
 wasiglk is inspired by [emglken](https://github.com/curiousdannii/emglken), which compiles IF interpreters to WebAssembly using Emscripten and Asyncify. This project takes a different approach:
