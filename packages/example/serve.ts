@@ -1,8 +1,5 @@
 /**
  * Development server for the example
- *
- * Serves the example with proper MIME types and COOP/COEP headers
- * required for SharedArrayBuffer (used by OPFS in workers).
  */
 
 import { join, dirname } from 'path';
@@ -41,11 +38,7 @@ void Bun.serve({
     const url = new URL(req.url);
     let path = url.pathname;
 
-    // Headers for SharedArrayBuffer support
-    const headers = new Headers({
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    });
+    const headers = new Headers();
 
     // Check static paths
     if (paths[path]) {
