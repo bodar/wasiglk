@@ -270,11 +270,42 @@ export fn glk_select(event: ?*event_t) callconv(.c) void {
         w.line_request = false;
         w.line_buffer = null;
         w.line_buffer_rock = .{ .num = 0 };
+    } else if (w.line_request_uni) {
+        if (w.line_buffer_uni) |lb| {
+            const max_copy = if (w.line_buflen > 1) w.line_buflen - 1 else 0;
+            const copy_len: glui32 = @intCast(@min(input_value.len, max_copy));
+            // Copy input bytes as unicode codepoints (ASCII range)
+            for (0..copy_len) |i| {
+                lb[i] = input_value[i];
+            }
+            if (copy_len < w.line_buflen) {
+                lb[copy_len] = 0;
+            }
+
+            event.?.type = evtype.LineInput;
+            event.?.win = @ptrCast(w);
+            event.?.val1 = copy_len;
+            event.?.val2 = terminatorToKeycode(input_event.terminator);
+
+            if (dispatch.retained_unregister_fn) |unregister_fn| {
+                // Typecode for glui32 array with passout: "&+#!Iu"
+                var typecode = "&+#!Iu".*;
+                unregister_fn(@ptrCast(lb), w.line_buflen, &typecode, w.line_buffer_rock);
+            }
+        }
+        w.line_request_uni = false;
+        w.line_buffer_uni = null;
+        w.line_buffer_rock = .{ .num = 0 };
     } else if (w.char_request) {
         event.?.type = evtype.CharInput;
         event.?.win = @ptrCast(w);
         event.?.val1 = if (input_value.len > 0) input_value[0] else keycode.Return;
         w.char_request = false;
+    } else if (w.char_request_uni) {
+        event.?.type = evtype.CharInput;
+        event.?.win = @ptrCast(w);
+        event.?.val1 = if (input_value.len > 0) input_value[0] else keycode.Return;
+        w.char_request_uni = false;
     }
 }
 
