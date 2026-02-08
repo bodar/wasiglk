@@ -4,7 +4,7 @@
  * Demonstrates using @bodar/wasiglk to run an interactive fiction interpreter.
  */
 
-import { createClient, type ClientUpdate } from '@bodar/wasiglk';
+import { createClient, type RemGlkUpdate, type ContentSpan } from '@bodar/wasiglk';
 
 // DOM elements
 const outputEl = document.getElementById('output')!;
@@ -37,6 +37,13 @@ function checkJSPISupport(): { supported: boolean; reason?: string } {
   }
 }
 
+// Extract text from a content span
+function spanText(span: ContentSpan): string {
+  if (typeof span === 'string') return span;
+  if ('text' in span) return span.text;
+  return '';
+}
+
 // Output handling
 function appendOutput(text: string): void {
   outputEl.textContent += text;
@@ -60,18 +67,32 @@ function disableInput(): void {
 }
 
 // Handle updates from the interpreter
-function handleUpdate(update: ClientUpdate): void {
-  switch (update.type) {
-    case 'content': {
-      const win = windows.get(update.windowId);
-      const isGrid = win?.type === 'grid';
+function handleUpdate(update: RemGlkUpdate): void {
+  if (update.type === 'error') {
+    setStatus(`Error: ${update.message}`, 'error');
+    return;
+  }
 
-      if (isGrid) {
-        // Grid window (status bar) - replace content
+  if (update.windows) {
+    for (const win of update.windows) {
+      windows.set(win.id, { type: win.type });
+    }
+    if (!initialized) {
+      initialized = true;
+      setStatus('Game initialized!', 'success');
+    }
+  }
+
+  if (update.content) {
+    for (const content of update.content) {
+      const win = windows.get(content.id);
+
+      if (win?.type === 'grid') {
+        // Grid window (status bar) - extract text from lines
         let text = '';
-        for (const span of update.content) {
-          if (span.type === 'text' && span.text) {
-            text += span.text;
+        for (const line of content.lines ?? []) {
+          for (const span of line.content ?? []) {
+            text += spanText(span);
           }
         }
         if (text) {
@@ -79,38 +100,21 @@ function handleUpdate(update: ClientUpdate): void {
           gameStatusBar.classList.add('visible');
         }
       } else {
-        // Buffer window - append content
-        if (update.clear) {
+        // Buffer window - append text from paragraphs
+        if (content.clear) {
           outputEl.textContent = '';
         }
-        for (const span of update.content) {
-          if (span.type === 'text' && span.text) {
-            appendOutput(span.text);
+        for (const para of content.text ?? []) {
+          for (const span of para.content ?? []) {
+            appendOutput(spanText(span));
           }
         }
       }
-      break;
     }
+  }
 
-    case 'input-request':
-      enableInput();
-      break;
-
-    case 'window':
-      // Track window types
-      for (const win of update.windows) {
-        windows.set(win.id, { type: win.type });
-      }
-      // First window update means the game is initialized
-      if (!initialized) {
-        initialized = true;
-        setStatus('Game initialized!', 'success');
-      }
-      break;
-
-    case 'error':
-      setStatus(`Error: ${update.message}`, 'error');
-      break;
+  if (update.input) {
+    enableInput();
   }
 }
 
@@ -149,24 +153,23 @@ async function main(): Promise<void> {
 
   try {
     // Create client - auto-detects format and loads interpreter
+    const outputRect = outputEl.getBoundingClientRect();
     client = await createClient({
       storyUrl: '/advent.ulx',
       interpreterUrl: '/glulxe.wasm',
       workerUrl: '/worker.js',
+      metrics: {
+        width: Math.floor(outputRect.width) || 800,
+        height: Math.floor(outputRect.height) || 600,
+        charWidth: 10,
+        charHeight: 18,
+      },
     });
 
     setStatus('Starting interpreter...', 'info');
 
     // Run the interpreter and handle updates
-    // Use the output container dimensions (pixels) for proper window layout
-    const outputRect = outputEl.getBoundingClientRect();
-    const metrics = {
-      width: Math.floor(outputRect.width) || 800,
-      height: Math.floor(outputRect.height) || 600,
-      charWidth: 10,  // Approximate character width in pixels
-      charHeight: 18, // Approximate character height in pixels
-    };
-    for await (const update of client.updates(metrics)) {
+    for await (const update of client.updates()) {
       handleUpdate(update);
     }
 

@@ -6,7 +6,7 @@
 
 import { BlorbParser } from './blorb';
 import { detectFormat, type FormatInfo, type StoryFormat } from './format';
-import { type ClientUpdate, parseRemGlkUpdate } from './protocol';
+import type { RemGlkUpdate } from './protocol';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './worker/messages';
 
 /** Configuration for creating a WasiGlk client instance. */
@@ -31,6 +31,8 @@ export interface ClientConfig {
    * - 'dialog': OPFS base + file dialogs for user-prompted saves
    */
   filesystem?: 'auto' | 'opfs' | 'memory' | 'dialog';
+  /** Display metrics for the interpreter output area. */
+  metrics?: UpdatesConfig;
 }
 
 /** Display metrics for the interpreter output area. */
@@ -58,11 +60,12 @@ export class WasiGlkClient {
   private blorb: BlorbParser | null = null;
   private worker: Worker | null = null;
   private running = false;
-  private pendingUpdates: ClientUpdate[] = [];
-  private updateResolve: ((value: IteratorResult<ClientUpdate>) => void) | null = null;
+  private pendingUpdates: RemGlkUpdate[] = [];
+  private updateResolve: ((value: IteratorResult<RemGlkUpdate>) => void) | null = null;
   private workerUrl: string | URL;
   private storyId: string;
   private filesystem: 'auto' | 'opfs' | 'memory' | 'dialog';
+  private metrics: UpdatesConfig;
 
   private constructor(
     storyData: Uint8Array,
@@ -71,7 +74,8 @@ export class WasiGlkClient {
     blorb: BlorbParser | null,
     workerUrl: string | URL,
     storyId: string,
-    filesystem: 'auto' | 'opfs' | 'memory' | 'dialog'
+    filesystem: 'auto' | 'opfs' | 'memory' | 'dialog',
+    metrics: UpdatesConfig,
   ) {
     this.storyData = storyData;
     this.interpreterData = interpreterData;
@@ -80,6 +84,7 @@ export class WasiGlkClient {
     this.workerUrl = workerUrl;
     this.storyId = storyId;
     this.filesystem = filesystem;
+    this.metrics = metrics;
   }
 
   /**
@@ -147,7 +152,7 @@ export class WasiGlkClient {
     const versionHash = hashBytes(storyData).toString(16).padStart(8, '0');
     const storyId = `${gameName}/${versionHash}`;
 
-    return new WasiGlkClient(executableData, interpreterData, formatInfo, blorb, config.workerUrl, storyId, config.filesystem ?? 'auto');
+    return new WasiGlkClient(executableData, interpreterData, formatInfo, blorb, config.workerUrl, storyId, config.filesystem ?? 'auto', config.metrics ?? { width: 80, height: 24 });
   }
 
   /** The detected format and interpreter for the loaded story. */
@@ -270,28 +275,21 @@ export class WasiGlkClient {
   }
 
   /**
-   * Start the interpreter and yield updates as they arrive.
+   * Start the interpreter and yield {@link RemGlkUpdate} objects as they arrive.
    *
-   * Returns an async iterator of {@link ClientUpdate} objects representing
-   * text content, input requests, window changes, and other events.
-   *
-   * @param config - Display metrics (width/height in characters or pixels)
+   * Each update represents a complete turn from the interpreter, containing
+   * all window, content, and input changes in a single batch.
    *
    * @example
    * ```typescript
-   * for await (const update of client.updates({ width: 80, height: 24 })) {
-   *   switch (update.type) {
-   *     case 'content':
-   *       // Render text content
-   *       break;
-   *     case 'input-request':
-   *       // Prompt user and call client.sendInput(response)
-   *       break;
-   *   }
+   * for await (const update of client.updates()) {
+   *   if (update.windows) { /* handle window layout *\/ }
+   *   if (update.content) { /* handle content for each window *\/ }
+   *   if (update.input) { /* prompt user and call client.sendInput() *\/ }
    * }
    * ```
    */
-  async *updates(config: UpdatesConfig): AsyncIterableIterator<ClientUpdate> {
+  async *updates(): AsyncIterableIterator<RemGlkUpdate> {
     if (this.running) throw new Error('Client is already running');
     this.running = true;
 
@@ -303,7 +301,7 @@ export class WasiGlkClient {
       };
 
       this.worker.onerror = (e: ErrorEvent) => {
-        this.pendingUpdates.push({ type: 'error', message: e.message || 'Worker error' });
+        this.pendingUpdates.push({ type: 'error', gen: 0, message: e.message || 'Worker error' });
         this.resolveNextUpdate();
       };
 
@@ -312,7 +310,7 @@ export class WasiGlkClient {
         interpreter: this.interpreterData,
         story: this.storyData,
         args: [this.formatInfo.interpreter, '/sys/story.ulx'],
-        metrics: config,
+        metrics: this.metrics,
         storyId: this.storyId,
         filesystem: this.filesystem,
       };
@@ -322,7 +320,7 @@ export class WasiGlkClient {
         if (this.pendingUpdates.length > 0) {
           yield this.pendingUpdates.shift()!;
         } else {
-          const result = await new Promise<IteratorResult<ClientUpdate>>(resolve => {
+          const result = await new Promise<IteratorResult<RemGlkUpdate>>(resolve => {
             this.updateResolve = resolve;
             if (!this.running) resolve({ value: undefined as any, done: true });
           });
@@ -340,13 +338,11 @@ export class WasiGlkClient {
   private handleWorkerMessage(msg: WorkerToMainMessage): void {
     switch (msg.type) {
       case 'update':
-        for (const update of parseRemGlkUpdate(msg.data, n => this.blorb?.getImageUrl(n))) {
-          this.pendingUpdates.push(update);
-        }
+        this.pendingUpdates.push(msg.data);
         this.resolveNextUpdate();
         break;
       case 'error':
-        this.pendingUpdates.push({ type: 'error', message: msg.message });
+        this.pendingUpdates.push({ type: 'error', gen: 0, message: msg.message });
         this.resolveNextUpdate();
         break;
       case 'exit':

@@ -39,10 +39,15 @@
  *   workerUrl: '/worker.js',
  * });
  *
- * for await (const update of client.updates({ width: 80, height: 24 })) {
- *   if (update.type === 'content') {
- *     for (const span of update.content) {
- *       if (span.type === 'text') process.stdout.write(span.text ?? '');
+ * for await (const update of client.updates()) {
+ *   if (update.content) {
+ *     for (const content of update.content) {
+ *       for (const para of content.text ?? []) {
+ *         for (const span of para.content ?? []) {
+ *           if (typeof span === 'string') process.stdout.write(span);
+ *           else if ('text' in span) process.stdout.write(span.text);
+ *         }
+ *       }
  *     }
  *   }
  * }
@@ -53,19 +58,25 @@
 export { WasiGlkClient, createClient } from './client';
 export type { ClientConfig, UpdatesConfig } from './client';
 
-// Protocol types
+// Protocol types (raw RemGlk protocol)
 export type {
-  ClientUpdate,
-  ContentClientUpdate,
-  InputRequestClientUpdate,
-  WindowClientUpdate,
-  ErrorClientUpdate,
-  TimerClientUpdate,
-  ProcessedContentSpan,
+  RemGlkUpdate,
   WindowUpdate,
+  ContentUpdate,
+  TextParagraph,
+  GridLine,
+  DrawOperation,
+  ContentSpan,
+  TextSpan,
+  SpecialSpan,
+  SpecialContent,
+  InputRequest,
+  SpecialInput,
   ImageAlignment,
   Metrics,
 } from './protocol';
+
+export { IMAGE_ALIGNMENT_VALUES } from './protocol';
 
 // Blorb parser
 export { BlorbParser } from './blorb';

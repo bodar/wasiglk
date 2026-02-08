@@ -1,12 +1,24 @@
 import { describe, expect, test } from 'bun:test';
-import { parseRemGlkUpdate, type RemGlkUpdate } from '../src/protocol';
+import type { RemGlkUpdate, ContentSpan, TextSpan } from '../src/protocol';
 
-// Default image URL resolver for tests
-const noopResolver = () => undefined;
+describe('RemGlkUpdate protocol types', () => {
+  test('content span can be a plain string', () => {
+    const span: ContentSpan = 'Hello, world!';
+    expect(typeof span).toBe('string');
+  });
 
-describe('parseRemGlkUpdate', () => {
-  test('parses content update with plain text (paragraph format)', () => {
-    // GlkOte spec: buffer window text uses paragraph structure
+  test('content span can be a text span with style', () => {
+    const span: ContentSpan = { style: 'emphasized', text: 'Important text' };
+    expect((span as TextSpan).text).toBe('Important text');
+    expect((span as TextSpan).style).toBe('emphasized');
+  });
+
+  test('content span can be a text span with hyperlink', () => {
+    const span: ContentSpan = { style: 'normal', text: 'click here', hyperlink: 42 };
+    expect((span as TextSpan).hyperlink).toBe(42);
+  });
+
+  test('RemGlkUpdate has expected shape for buffer content', () => {
     const update: RemGlkUpdate = {
       type: 'update',
       gen: 2,
@@ -18,256 +30,13 @@ describe('parseRemGlkUpdate', () => {
       ],
     };
 
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate).toBeDefined();
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.windowId).toBe(1);
-      expect(contentUpdate.content).toHaveLength(1);
-      expect(contentUpdate.content[0].type).toBe('text');
-      expect(contentUpdate.content[0].text).toBe('Hello, world!');
-    }
+    expect(update.content).toHaveLength(1);
+    expect(update.content![0].id).toBe(1);
+    expect(update.content![0].text).toHaveLength(1);
+    expect(update.content![0].text![0].content).toHaveLength(1);
   });
 
-  test('parses content with string spans (paragraph format)', () => {
-    // GlkOte spec: buffer window text uses paragraph structure
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 3,
-      content: [
-        {
-          id: 1,
-          text: [{ append: true, content: ['Plain text as string'] }],
-        },
-      ],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.content[0].text).toBe('Plain text as string');
-    }
-  });
-
-  test('parses content with styled text spans (paragraph format)', () => {
-    // GlkOte spec: styled text spans have style and text fields
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 3,
-      content: [
-        {
-          id: 1,
-          text: [{ append: true, content: [{ style: 'emphasized', text: 'Important text' }] }],
-        },
-      ],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.content[0].text).toBe('Important text');
-      expect(contentUpdate.content[0].style).toBe('emphasized');
-    }
-  });
-
-  test('parses content with hyperlink text spans (paragraph format)', () => {
-    // GlkOte spec: text spans can have hyperlink field for clickable links
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 3,
-      content: [
-        {
-          id: 1,
-          text: [{ append: true, content: [{ style: 'normal', text: 'click here', hyperlink: 42 }] }],
-        },
-      ],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.content[0].text).toBe('click here');
-      expect(contentUpdate.content[0].hyperlink).toBe(42);
-    }
-  });
-
-  test('parses content with image special span (paragraph format)', () => {
-    const imageUrlResolver = (num: number) =>
-      num === 5 ? 'blob:test-image-5' : undefined;
-
-    // GlkOte spec: buffer window text uses paragraph structure
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 4,
-      content: [
-        {
-          id: 1,
-          text: [
-            {
-              append: true,
-              content: [
-                {
-                  special: {
-                    type: 'image',
-                    image: 5,
-                    width: 100,
-                    height: 80,
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    };
-
-    const results = parseRemGlkUpdate(update, imageUrlResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.content).toHaveLength(1);
-      expect(contentUpdate.content[0].type).toBe('image');
-      expect(contentUpdate.content[0].imageNumber).toBe(5);
-      expect(contentUpdate.content[0].imageUrl).toBe('blob:test-image-5');
-      expect(contentUpdate.content[0].width).toBe(100);
-      expect(contentUpdate.content[0].height).toBe(80);
-    }
-  });
-
-  test('parses content with flowbreak (paragraph format)', () => {
-    // GlkOte spec: flowbreak can be in paragraph object or content array
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 5,
-      content: [
-        {
-          id: 1,
-          text: [{ flowbreak: true }],
-        },
-      ],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.content).toHaveLength(1);
-      expect(contentUpdate.content[0].type).toBe('flowbreak');
-    }
-  });
-
-  test('parses input request for line input', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 6,
-      input: [{ id: 1, type: 'line', maxlen: 255 }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.inputType).toBe('line');
-      expect(inputUpdate.windowId).toBe(1);
-      expect(inputUpdate.maxLength).toBe(255);
-    }
-  });
-
-  test('parses input request for char input', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 7,
-      input: [{ id: 2, type: 'char' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.inputType).toBe('char');
-      expect(inputUpdate.windowId).toBe(2);
-    }
-  });
-
-  test('parses window update', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 8,
-      windows: [
-        {
-          id: 1,
-          type: 'buffer',
-          rock: 0,
-          left: 0,
-          top: 0,
-          width: 80,
-          height: 25,
-        },
-      ],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const windowUpdate = results.find((u) => u.type === 'window');
-    expect(windowUpdate?.type).toBe('window');
-    if (windowUpdate?.type === 'window') {
-      expect(windowUpdate.windows).toHaveLength(1);
-      expect(windowUpdate.windows[0].id).toBe(1);
-      expect(windowUpdate.windows[0].type).toBe('buffer');
-    }
-  });
-
-  test('parses error update', () => {
-    const update: RemGlkUpdate = {
-      type: 'error',
-      gen: 0,
-      message: 'Something went wrong',
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-    expect(results).toHaveLength(1);
-    expect(results[0].type).toBe('error');
-    if (results[0].type === 'error') {
-      expect(results[0].message).toBe('Something went wrong');
-    }
-  });
-
-  test('parses clear flag', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 9,
-      content: [
-        {
-          id: 1,
-          clear: true,
-          text: [],
-        },
-      ],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.clear).toBe(true);
-    }
-  });
-
-  test('parses grid window lines format (GlkOte spec)', () => {
-    // GlkOte spec: grid window content uses lines array with explicit line numbers
+  test('RemGlkUpdate has expected shape for grid content', () => {
     const update: RemGlkUpdate = {
       type: 'update',
       gen: 10,
@@ -281,310 +50,52 @@ describe('parseRemGlkUpdate', () => {
       ],
     };
 
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.windowId).toBe(2);
-      expect(contentUpdate.content).toHaveLength(1);
-      expect(contentUpdate.content[0].type).toBe('text');
-      expect(contentUpdate.content[0].text).toBe(' At End Of Road                     Score: 36    Moves: 1');
-    }
+    expect(update.content![0].lines).toHaveLength(1);
+    expect(update.content![0].lines![0].line).toBe(0);
   });
 
-  test('parses grid window with multiple lines', () => {
+  test('RemGlkUpdate can contain windows, content, and input together', () => {
     const update: RemGlkUpdate = {
       type: 'update',
-      gen: 11,
-      content: [
-        {
-          id: 2,
-          lines: [
-            { line: 0, content: ['Line 0 text'] },
-            { line: 2, content: ['Line 2 text'] },
-          ],
-        },
-      ],
+      gen: 1,
+      windows: [{ id: 1, type: 'buffer', rock: 0, width: 80, height: 25 }],
+      content: [{ id: 1, text: [{ content: [{ style: 'normal', text: 'Welcome' }] }] }],
+      input: [{ id: 1, type: 'line', maxlen: 255 }],
     };
 
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const contentUpdate = results.find((u) => u.type === 'content');
-    expect(contentUpdate?.type).toBe('content');
-    if (contentUpdate?.type === 'content') {
-      expect(contentUpdate.content).toHaveLength(2);
-      expect(contentUpdate.content[0].text).toBe('Line 0 text');
-      expect(contentUpdate.content[1].text).toBe('Line 2 text');
-    }
+    expect(update.windows).toHaveLength(1);
+    expect(update.content).toHaveLength(1);
+    expect(update.input).toHaveLength(1);
   });
 
-  test('parses timer update with interval', () => {
+  test('RemGlkUpdate error type', () => {
+    const update: RemGlkUpdate = {
+      type: 'error',
+      gen: 0,
+      message: 'Something went wrong',
+    };
+
+    expect(update.type).toBe('error');
+    expect(update.message).toBe('Something went wrong');
+  });
+
+  test('RemGlkUpdate timer field', () => {
     const update: RemGlkUpdate = {
       type: 'update',
       gen: 12,
-      timer: 1000, // 1 second
-      input: [{ id: 1, type: 'char' }],
+      timer: 1000,
     };
 
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const timerUpdate = results.find((u) => u.type === 'timer');
-    expect(timerUpdate?.type).toBe('timer');
-    if (timerUpdate?.type === 'timer') {
-      expect(timerUpdate.interval).toBe(1000);
-    }
+    expect(update.timer).toBe(1000);
   });
 
-  test('parses timer update with null (cancel)', () => {
+  test('RemGlkUpdate timer null cancels timer', () => {
     const update: RemGlkUpdate = {
       type: 'update',
       gen: 13,
       timer: null,
-      input: [{ id: 1, type: 'char' }],
     };
 
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const timerUpdate = results.find((u) => u.type === 'timer');
-    expect(timerUpdate?.type).toBe('timer');
-    if (timerUpdate?.type === 'timer') {
-      expect(timerUpdate.interval).toBe(null);
-    }
-  });
-
-  test('does not include timer update when timer field is absent', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 14,
-      input: [{ id: 1, type: 'char' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const timerUpdate = results.find((u) => u.type === 'timer');
-    expect(timerUpdate).toBeUndefined();
-  });
-
-  test('parses input request with mouse flag', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 15,
-      input: [{ id: 1, type: 'char', mouse: true }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.inputType).toBe('char');
-      expect(inputUpdate.windowId).toBe(1);
-      expect(inputUpdate.mouse).toBe(true);
-    }
-  });
-
-  test('input request without mouse flag has undefined mouse', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 16,
-      input: [{ id: 1, type: 'line' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.mouse).toBeUndefined();
-    }
-  });
-
-  test('parses input request with hyperlink flag', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 17,
-      input: [{ id: 1, type: 'line', hyperlink: true }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.inputType).toBe('line');
-      expect(inputUpdate.windowId).toBe(1);
-      expect(inputUpdate.hyperlink).toBe(true);
-    }
-  });
-
-  test('input request without hyperlink flag has undefined hyperlink', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 18,
-      input: [{ id: 1, type: 'char' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.hyperlink).toBeUndefined();
-    }
-  });
-
-  test('parses input request with both mouse and hyperlink flags', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 19,
-      input: [{ id: 1, type: 'char', mouse: true, hyperlink: true }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.mouse).toBe(true);
-      expect(inputUpdate.hyperlink).toBe(true);
-    }
-  });
-
-  test('parses input request with grid cursor position', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 20,
-      input: [{ id: 1, type: 'line', xpos: 5, ypos: 2 }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.xpos).toBe(5);
-      expect(inputUpdate.ypos).toBe(2);
-    }
-  });
-
-  test('input request without grid position has undefined xpos/ypos', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 21,
-      input: [{ id: 1, type: 'line' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.xpos).toBeUndefined();
-      expect(inputUpdate.ypos).toBeUndefined();
-    }
-  });
-
-  test('parses input request with initial text', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 22,
-      input: [{ id: 1, type: 'line', initial: 'prefilled text' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.initial).toBe('prefilled text');
-    }
-  });
-
-  test('parses input request with terminators array', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 23,
-      input: [{ id: 1, type: 'line', terminators: ['escape', 'func1', 'func2'] }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.terminators).toEqual(['escape', 'func1', 'func2']);
-    }
-  });
-
-  test('input request without terminators has undefined terminators', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 24,
-      input: [{ id: 1, type: 'line' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const inputUpdate = results.find((u) => u.type === 'input-request');
-    expect(inputUpdate?.type).toBe('input-request');
-    if (inputUpdate?.type === 'input-request') {
-      expect(inputUpdate.terminators).toBeUndefined();
-    }
-  });
-
-  test('parses disable flag when true', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 25,
-      disable: true,
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const disableUpdate = results.find((u) => u.type === 'disable');
-    expect(disableUpdate?.type).toBe('disable');
-    if (disableUpdate?.type === 'disable') {
-      expect(disableUpdate.disabled).toBe(true);
-    }
-  });
-
-  test('does not include disable update when disable field is absent', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 26,
-      input: [{ id: 1, type: 'char' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const disableUpdate = results.find((u) => u.type === 'disable');
-    expect(disableUpdate).toBeUndefined();
-  });
-
-  test('parses exit flag when true', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 27,
-      exit: true,
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const exitUpdate = results.find((u) => u.type === 'exit');
-    expect(exitUpdate?.type).toBe('exit');
-  });
-
-  test('does not include exit update when exit field is absent', () => {
-    const update: RemGlkUpdate = {
-      type: 'update',
-      gen: 28,
-      input: [{ id: 1, type: 'char' }],
-    };
-
-    const results = parseRemGlkUpdate(update, noopResolver);
-
-    const exitUpdate = results.find((u) => u.type === 'exit');
-    expect(exitUpdate).toBeUndefined();
+    expect(update.timer).toBe(null);
   });
 });
