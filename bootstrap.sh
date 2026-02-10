@@ -18,7 +18,10 @@ function http() {
 if [[ ! -f "$MISE_INSTALL_PATH" ]]; then
   http https://mise.run | sh
 fi
-mise plugins install wasi-sdk https://github.com/mise-plugins/mise-wasi-sdk.git 2>/dev/null || true
+git -C "$SCRIPT_DIR" submodule update --init --recursive --quiet
+if ! mise plugins list 2>/dev/null | grep -q wasi-sdk; then
+  mise plugins install wasi-sdk https://github.com/mise-plugins/mise-wasi-sdk.git
+fi
 mise install
 eval "$(mise env)"
 
