@@ -435,6 +435,45 @@ export fn glk_request_line_event_uni(win_opaque: winid_t, buf: ?[*]glui32, maxle
     }
 }
 
+// ============== Tests ==============
+
+const testing = std.testing;
+
+test "terminatorToKeycode maps all 13 terminator strings" {
+    try testing.expectEqual(keycode.Escape, terminatorToKeycode("escape"));
+    try testing.expectEqual(keycode.Func1, terminatorToKeycode("func1"));
+    try testing.expectEqual(keycode.Func2, terminatorToKeycode("func2"));
+    try testing.expectEqual(keycode.Func3, terminatorToKeycode("func3"));
+    try testing.expectEqual(keycode.Func4, terminatorToKeycode("func4"));
+    try testing.expectEqual(keycode.Func5, terminatorToKeycode("func5"));
+    try testing.expectEqual(keycode.Func6, terminatorToKeycode("func6"));
+    try testing.expectEqual(keycode.Func7, terminatorToKeycode("func7"));
+    try testing.expectEqual(keycode.Func8, terminatorToKeycode("func8"));
+    try testing.expectEqual(keycode.Func9, terminatorToKeycode("func9"));
+    try testing.expectEqual(keycode.Func10, terminatorToKeycode("func10"));
+    try testing.expectEqual(keycode.Func11, terminatorToKeycode("func11"));
+    try testing.expectEqual(keycode.Func12, terminatorToKeycode("func12"));
+}
+
+test "terminatorToKeycode returns 0 for null and unknown" {
+    try testing.expectEqual(@as(glui32, 0), terminatorToKeycode(null));
+    try testing.expectEqual(@as(glui32, 0), terminatorToKeycode("unknown"));
+    try testing.expectEqual(@as(glui32, 0), terminatorToKeycode(""));
+}
+
+test "keycodeToTerminator and terminatorToKeycode roundtrip" {
+    const keycodes = [_]glui32{
+        keycode.Escape, keycode.Func1,  keycode.Func2,  keycode.Func3,
+        keycode.Func4,  keycode.Func5,  keycode.Func6,  keycode.Func7,
+        keycode.Func8,  keycode.Func9,  keycode.Func10, keycode.Func11,
+        keycode.Func12,
+    };
+    for (keycodes) |kc| {
+        const term_str = protocol.keycodeToTerminator(kc).?;
+        try testing.expectEqual(kc, terminatorToKeycode(term_str));
+    }
+}
+
 // glk_exit is used by event handling
 pub fn glk_exit() callconv(.c) noreturn {
     protocol.flushTextBuffer();

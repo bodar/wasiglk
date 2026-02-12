@@ -28,6 +28,11 @@
   - Always try Bun first
   - Fall back to Node only if something doesn't work in Bun
 
+## Testing
+
+- **Zig and C code should have inline unit tests** where reasonably possible (pure logic, mappings, conversions)
+- Run Zig tests with `./run testZig`; they also run as part of `./run test` and `./run ci`
+
 ## Browser Automation
 
 - **Never add wait/sleep calls** when using Chrome or Playwright automation tools

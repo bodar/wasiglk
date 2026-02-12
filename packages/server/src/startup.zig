@@ -77,5 +77,7 @@ fn wasiGlkMain(argc: c_int, argv: [*][*:0]u8) callconv(.c) c_int {
 }
 
 comptime {
-    @export(&wasiGlkMain, .{ .name = "main", .linkage = .strong });
+    if (!@import("builtin").is_test) {
+        @export(&wasiGlkMain, .{ .name = "main", .linkage = .strong });
+    }
 }

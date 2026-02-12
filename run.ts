@@ -24,6 +24,7 @@ export async function check() {
 }
 
 export async function build(...args: string[]) {
+    await testZig();
     await buildZig(...args);
     await optimize();
 }
@@ -86,13 +87,19 @@ export async function bundle() {
     console.log(`Bundled ${wasmFiles.length} WASM files into ${wasmDir}`);
 }
 
+// Run Zig unit tests (server package)
+export async function testZig(...args: string[]) {
+    await $`zig build --build-file packages/server/build.zig test ${args}`;
+}
+
 // Run client unit tests
 export async function testClient() {
     await $`bun test --cwd packages/client`;
 }
 
-// Run all tests (client unit tests + E2E)
+// Run all tests (Zig + client unit tests + E2E)
 export async function test(...args: string[]) {
+    await testZig();
     await testClient();
     await testE2E(...args);
 }
@@ -217,6 +224,7 @@ export async function publish(dryRun: string = "") {
 export async function ci() {
     await clean();
     await check();
+    await testZig();
     await testClient();
     await build();
     await bundle();
@@ -226,7 +234,7 @@ export async function ci() {
 // Command dispatch - same pattern as bodar.ts
 const commands: Record<string, Function> = {
     version, clean, check, build, buildZig, optimize, bundle,
-    testClient, test, testE2E, testHeaded,
+    testZig, testClient, test, testE2E, testHeaded,
     demo, serve, jsr, publish, ci
 };
 

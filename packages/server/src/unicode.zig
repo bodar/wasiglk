@@ -72,6 +72,85 @@ export fn glk_buffer_canon_normalize_uni(buf: ?[*]glui32, len: glui32, numchars:
     return numchars;
 }
 
+// ============== Tests ==============
+
+const testing = std.testing;
+
+test "glk_char_to_lower converts uppercase ASCII" {
+    try testing.expectEqual(@as(u8, 'a'), glk_char_to_lower('A'));
+    try testing.expectEqual(@as(u8, 'z'), glk_char_to_lower('Z'));
+}
+
+test "glk_char_to_lower preserves non-alpha characters" {
+    try testing.expectEqual(@as(u8, '0'), glk_char_to_lower('0'));
+    try testing.expectEqual(@as(u8, ' '), glk_char_to_lower(' '));
+    try testing.expectEqual(@as(u8, 'a'), glk_char_to_lower('a'));
+}
+
+test "glk_char_to_upper converts lowercase ASCII" {
+    try testing.expectEqual(@as(u8, 'A'), glk_char_to_upper('a'));
+    try testing.expectEqual(@as(u8, 'Z'), glk_char_to_upper('z'));
+}
+
+test "glk_char_to_upper preserves non-alpha characters" {
+    try testing.expectEqual(@as(u8, '0'), glk_char_to_upper('0'));
+    try testing.expectEqual(@as(u8, ' '), glk_char_to_upper(' '));
+    try testing.expectEqual(@as(u8, 'A'), glk_char_to_upper('A'));
+}
+
+test "glk_buffer_to_lower_case_uni converts buffer" {
+    var buf = [_]glui32{ 'H', 'E', 'L', 'L', 'O' };
+    const result = glk_buffer_to_lower_case_uni(&buf, 5, 5);
+    try testing.expectEqual(@as(glui32, 5), result);
+    try testing.expectEqual(@as(glui32, 'h'), buf[0]);
+    try testing.expectEqual(@as(glui32, 'e'), buf[1]);
+    try testing.expectEqual(@as(glui32, 'l'), buf[2]);
+    try testing.expectEqual(@as(glui32, 'o'), buf[4]);
+}
+
+test "glk_buffer_to_lower_case_uni with null buf" {
+    try testing.expectEqual(@as(glui32, 3), glk_buffer_to_lower_case_uni(null, 5, 3));
+}
+
+test "glk_buffer_to_lower_case_uni respects numchars < len" {
+    var buf = [_]glui32{ 'A', 'B', 'C', 'D' };
+    _ = glk_buffer_to_lower_case_uni(&buf, 4, 2);
+    try testing.expectEqual(@as(glui32, 'a'), buf[0]);
+    try testing.expectEqual(@as(glui32, 'b'), buf[1]);
+    try testing.expectEqual(@as(glui32, 'C'), buf[2]); // unchanged
+    try testing.expectEqual(@as(glui32, 'D'), buf[3]); // unchanged
+}
+
+test "glk_buffer_to_upper_case_uni converts buffer" {
+    var buf = [_]glui32{ 'h', 'e', 'l', 'l', 'o' };
+    const result = glk_buffer_to_upper_case_uni(&buf, 5, 5);
+    try testing.expectEqual(@as(glui32, 5), result);
+    try testing.expectEqual(@as(glui32, 'H'), buf[0]);
+    try testing.expectEqual(@as(glui32, 'O'), buf[4]);
+}
+
+test "glk_buffer_to_title_case_uni capitalizes first char" {
+    var buf = [_]glui32{ 'h', 'e', 'l', 'l', 'o' };
+    const result = glk_buffer_to_title_case_uni(&buf, 5, 5, 0);
+    try testing.expectEqual(@as(glui32, 5), result);
+    try testing.expectEqual(@as(glui32, 'H'), buf[0]);
+    try testing.expectEqual(@as(glui32, 'e'), buf[1]); // rest unchanged
+}
+
+test "glk_buffer_to_title_case_uni with lowerrest" {
+    var buf = [_]glui32{ 'h', 'E', 'L', 'L', 'O' };
+    _ = glk_buffer_to_title_case_uni(&buf, 5, 5, 1);
+    try testing.expectEqual(@as(glui32, 'H'), buf[0]);
+    try testing.expectEqual(@as(glui32, 'e'), buf[1]);
+    try testing.expectEqual(@as(glui32, 'l'), buf[2]);
+    try testing.expectEqual(@as(glui32, 'o'), buf[4]);
+}
+
+test "glk_buffer_to_title_case_uni empty buffer" {
+    var buf = [_]glui32{ 'a' };
+    try testing.expectEqual(@as(glui32, 0), glk_buffer_to_title_case_uni(&buf, 0, 0, 0));
+}
+
 // ============== Unicode Output ==============
 
 export fn glk_put_char_uni(ch: glui32) callconv(.c) void {

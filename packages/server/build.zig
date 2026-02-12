@@ -108,6 +108,25 @@ pub fn build(b: *std.Build) void {
         b.step("bocfel", "Build Bocfel interpreter (native only)").dependOn(&bocfel_install.step);
         b.getInstallStep().dependOn(&bocfel_install.step);
     }
+
+    // Unit tests - always target native (host) since the test runner must execute locally
+    const test_step = b.step("test", "Run Zig unit tests");
+    const unit_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = b.resolveTargetQuery(.{}),
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    // Link C sources needed by Zig modules (blorb/graphics reference giblorb_* symbols)
+    unit_tests.addCSourceFiles(.{
+        .root = b.path("src"),
+        .files = &.{ "gi_blorb.c" },
+    });
+    unit_tests.addIncludePath(b.path("src"));
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    test_step.dependOn(&run_unit_tests.step);
 }
 
 // Build the WASI-Glk implementation from Zig source

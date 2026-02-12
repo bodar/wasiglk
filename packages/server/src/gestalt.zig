@@ -33,7 +33,7 @@ export fn glk_gestalt_ext(sel: glui32, val: glui32, arr: ?[*]glui32, arrlen: glu
             return gestalt.CharOutput_CannotPrint;
         },
         gestalt.Unicode, gestalt.UnicodeNorm => return 1,
-        gestalt.Timer => return 0,
+        gestalt.Timer => return 1,
         gestalt.Graphics, gestalt.DrawImage, gestalt.GraphicsTransparency => {
             // Graphics supported if Blorb map with images is loaded
             return if (blorb.blorb_map != null) @as(glui32, 1) else @as(glui32, 0);
@@ -49,10 +49,98 @@ export fn glk_gestalt_ext(sel: glui32, val: glui32, arr: ?[*]glui32, arrlen: glu
         },
         gestalt.DateTime => return 1,
         gestalt.LineInputEcho, gestalt.LineTerminators => return 1,
-        gestalt.LineTerminatorKey => return 0,
+        gestalt.LineTerminatorKey => {
+            // Escape and function keys can be used as line terminators
+            return if (protocol.keycodeToTerminator(val) != null) 1 else 0;
+        },
         gestalt.ResourceStream => return 1,
         else => return 0,
     }
+}
+
+// ============== Tests ==============
+
+const testing = std.testing;
+
+test "gestalt Version returns 0x00000706" {
+    try testing.expectEqual(@as(glui32, 0x00000706), glk_gestalt(gestalt.Version, 0));
+}
+
+test "gestalt CharInput accepts ASCII and extended Latin" {
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.CharInput, 'a'));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.CharInput, 0x7F));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.CharInput, 0xA0));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.CharInput, 0xFF));
+}
+
+test "gestalt CharInput rejects 0x80-0x9F gap" {
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.CharInput, 0x80));
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.CharInput, 0x9F));
+}
+
+test "gestalt CharInput accepts special keycodes" {
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.CharInput, types.keycode.Return));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.CharInput, types.keycode.Escape));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.CharInput, types.keycode.Func1));
+}
+
+test "gestalt LineInput accepts ASCII and extended Latin" {
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.LineInput, 'a'));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.LineInput, 0xA0));
+}
+
+test "gestalt LineInput rejects 0x80-0x9F gap" {
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.LineInput, 0x80));
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.LineInput, 0x9F));
+}
+
+test "gestalt CharOutput fills arr with character count" {
+    var arr = [_]glui32{0};
+    const result = glk_gestalt_ext(gestalt.CharOutput, 'a', &arr, 1);
+    try testing.expectEqual(gestalt.CharOutput_ExactPrint, result);
+    try testing.expectEqual(@as(glui32, 1), arr[0]);
+}
+
+test "gestalt CharOutput returns CannotPrint for unprintable" {
+    var arr = [_]glui32{99};
+    const result = glk_gestalt_ext(gestalt.CharOutput, 0x80, &arr, 1);
+    try testing.expectEqual(gestalt.CharOutput_CannotPrint, result);
+    try testing.expectEqual(@as(glui32, 0), arr[0]);
+}
+
+test "gestalt Unicode and DateTime return 1" {
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.Unicode, 0));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.DateTime, 0));
+}
+
+test "gestalt Hyperlinks returns 1" {
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.Hyperlinks, 0));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.HyperlinkInput, 0));
+}
+
+test "gestalt Timer returns 1" {
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.Timer, 0));
+}
+
+test "gestalt Sound returns 0" {
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.Sound, 0));
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.Sound2, 0));
+}
+
+test "gestalt LineTerminatorKey accepts mapped keys" {
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.LineTerminatorKey, types.keycode.Escape));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.LineTerminatorKey, types.keycode.Func1));
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.LineTerminatorKey, types.keycode.Func12));
+}
+
+test "gestalt LineTerminatorKey rejects unmapped keys" {
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.LineTerminatorKey, types.keycode.Return));
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.LineTerminatorKey, types.keycode.Left));
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.LineTerminatorKey, 'a'));
+}
+
+test "gestalt unknown selector returns 0" {
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(999, 0));
 }
 
 pub export fn glk_exit() callconv(.c) noreturn {

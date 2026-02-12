@@ -908,6 +908,102 @@ pub fn fileusageToType(usage: glui32) []const u8 {
     };
 }
 
+// ============== Tests ==============
+
+const testing = std.testing;
+
+test "keycodeToTerminator maps all 13 terminators" {
+    const kc = types.keycode;
+    try testing.expectEqualStrings("escape", keycodeToTerminator(kc.Escape).?);
+    try testing.expectEqualStrings("func1", keycodeToTerminator(kc.Func1).?);
+    try testing.expectEqualStrings("func2", keycodeToTerminator(kc.Func2).?);
+    try testing.expectEqualStrings("func3", keycodeToTerminator(kc.Func3).?);
+    try testing.expectEqualStrings("func4", keycodeToTerminator(kc.Func4).?);
+    try testing.expectEqualStrings("func5", keycodeToTerminator(kc.Func5).?);
+    try testing.expectEqualStrings("func6", keycodeToTerminator(kc.Func6).?);
+    try testing.expectEqualStrings("func7", keycodeToTerminator(kc.Func7).?);
+    try testing.expectEqualStrings("func8", keycodeToTerminator(kc.Func8).?);
+    try testing.expectEqualStrings("func9", keycodeToTerminator(kc.Func9).?);
+    try testing.expectEqualStrings("func10", keycodeToTerminator(kc.Func10).?);
+    try testing.expectEqualStrings("func11", keycodeToTerminator(kc.Func11).?);
+    try testing.expectEqualStrings("func12", keycodeToTerminator(kc.Func12).?);
+}
+
+test "keycodeToTerminator returns null for unmapped keycodes" {
+    try testing.expect(keycodeToTerminator(0) == null);
+    try testing.expect(keycodeToTerminator('a') == null);
+    try testing.expect(keycodeToTerminator(types.keycode.Return) == null);
+    try testing.expect(keycodeToTerminator(types.keycode.Left) == null);
+}
+
+test "alignmentToString maps all 5 values" {
+    try testing.expectEqualStrings("inlineup", alignmentToString(1));
+    try testing.expectEqualStrings("inlinedown", alignmentToString(2));
+    try testing.expectEqualStrings("inlinecenter", alignmentToString(3));
+    try testing.expectEqualStrings("marginleft", alignmentToString(4));
+    try testing.expectEqualStrings("marginright", alignmentToString(5));
+}
+
+test "alignmentToString defaults to inlineup" {
+    try testing.expectEqualStrings("inlineup", alignmentToString(0));
+    try testing.expectEqualStrings("inlineup", alignmentToString(99));
+}
+
+test "styleToString maps all 11 Glk styles" {
+    try testing.expectEqualStrings("normal", styleToString(0));
+    try testing.expectEqualStrings("emphasized", styleToString(1));
+    try testing.expectEqualStrings("preformatted", styleToString(2));
+    try testing.expectEqualStrings("header", styleToString(3));
+    try testing.expectEqualStrings("subheader", styleToString(4));
+    try testing.expectEqualStrings("alert", styleToString(5));
+    try testing.expectEqualStrings("note", styleToString(6));
+    try testing.expectEqualStrings("blockquote", styleToString(7));
+    try testing.expectEqualStrings("input", styleToString(8));
+    try testing.expectEqualStrings("user1", styleToString(9));
+    try testing.expectEqualStrings("user2", styleToString(10));
+}
+
+test "styleToString defaults to normal for out-of-range" {
+    try testing.expectEqualStrings("normal", styleToString(11));
+    try testing.expectEqualStrings("normal", styleToString(999));
+}
+
+test "formatColorHex formats colors correctly" {
+    var buf: [8]u8 = undefined;
+    try testing.expectEqualStrings("#000000", formatColorHex(&buf, 0x000000));
+    try testing.expectEqualStrings("#FFFFFF", formatColorHex(&buf, 0xFFFFFF));
+    try testing.expectEqualStrings("#FF0000", formatColorHex(&buf, 0xFF0000));
+    try testing.expectEqualStrings("#00FF00", formatColorHex(&buf, 0x00FF00));
+    try testing.expectEqualStrings("#0000FF", formatColorHex(&buf, 0x0000FF));
+    try testing.expectEqualStrings("#ABCDEF", formatColorHex(&buf, 0xABCDEF));
+}
+
+test "filemodeToString maps all 4 modes" {
+    const fm = types.filemode;
+    try testing.expectEqualStrings("read", filemodeToString(fm.Read));
+    try testing.expectEqualStrings("write", filemodeToString(fm.Write));
+    try testing.expectEqualStrings("readwrite", filemodeToString(fm.ReadWrite));
+    try testing.expectEqualStrings("writeappend", filemodeToString(fm.WriteAppend));
+}
+
+test "filemodeToString defaults to read for unknown" {
+    try testing.expectEqualStrings("read", filemodeToString(99));
+}
+
+test "fileusageToType maps all 4 types" {
+    const fu = types.fileusage;
+    try testing.expectEqualStrings("data", fileusageToType(fu.Data));
+    try testing.expectEqualStrings("save", fileusageToType(fu.SavedGame));
+    try testing.expectEqualStrings("transcript", fileusageToType(fu.Transcript));
+    try testing.expectEqualStrings("command", fileusageToType(fu.InputRecord));
+}
+
+test "fileusageToType masks off TextMode flag" {
+    const fu = types.fileusage;
+    try testing.expectEqualStrings("save", fileusageToType(fu.SavedGame | fu.TextMode));
+    try testing.expectEqualStrings("transcript", fileusageToType(fu.Transcript | fu.TextMode));
+}
+
 // Send a specialinput request and wait for the response (per GlkOte spec)
 // Returns the selected filename, or null if the user cancelled
 // This function blocks via stdin read (JSPI suspends in browser)

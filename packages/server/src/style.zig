@@ -37,6 +37,20 @@ export fn glk_style_measure(win: winid_t, styl: glui32, hint: glui32, result: ?*
     return 0;
 }
 
+// ============== Tests ==============
+
+const testing = @import("std").testing;
+
+test "glk_style_distinguish returns 1 for different styles" {
+    try testing.expectEqual(@as(glui32, 1), glk_style_distinguish(null, 0, 1));
+    try testing.expectEqual(@as(glui32, 1), glk_style_distinguish(null, 2, 8));
+}
+
+test "glk_style_distinguish returns 0 for same style" {
+    try testing.expectEqual(@as(glui32, 0), glk_style_distinguish(null, 0, 0));
+    try testing.expectEqual(@as(glui32, 0), glk_style_distinguish(null, 5, 5));
+}
+
 export fn glk_set_echo_line_event(win: winid_t, val: glui32) callconv(.c) void {
     _ = win;
     _ = val;

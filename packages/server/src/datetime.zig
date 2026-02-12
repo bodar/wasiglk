@@ -43,6 +43,52 @@ export fn glk_time_to_date_utc(time: ?*const glktimeval_t, date: ?*glkdate_t) ca
     date.?.microsec = time.?.microsec;
 }
 
+// ============== Tests ==============
+
+const testing = std.testing;
+
+test "glk_time_to_date_utc for Unix epoch (1970-01-01 Thursday)" {
+    const time = glktimeval_t{ .high_sec = 0, .low_sec = 0, .microsec = 0 };
+    var date: glkdate_t = undefined;
+    glk_time_to_date_utc(&time, &date);
+    try testing.expectEqual(@as(glsi32, 1970), date.year);
+    try testing.expectEqual(@as(glsi32, 1), date.month);
+    try testing.expectEqual(@as(glsi32, 1), date.day);
+    try testing.expectEqual(@as(glsi32, 4), date.weekday); // Thursday
+    try testing.expectEqual(@as(glsi32, 0), date.hour);
+    try testing.expectEqual(@as(glsi32, 0), date.minute);
+    try testing.expectEqual(@as(glsi32, 0), date.second);
+    try testing.expectEqual(@as(glsi32, 0), date.microsec);
+}
+
+test "glk_time_to_date_utc for 2000-01-01 (Saturday)" {
+    // 946684800 seconds since epoch
+    const secs: u32 = 946684800;
+    const time = glktimeval_t{ .high_sec = 0, .low_sec = secs, .microsec = 0 };
+    var date: glkdate_t = undefined;
+    glk_time_to_date_utc(&time, &date);
+    try testing.expectEqual(@as(glsi32, 2000), date.year);
+    try testing.expectEqual(@as(glsi32, 1), date.month);
+    try testing.expectEqual(@as(glsi32, 1), date.day);
+    try testing.expectEqual(@as(glsi32, 6), date.weekday); // Saturday
+    try testing.expectEqual(@as(glsi32, 0), date.hour);
+    try testing.expectEqual(@as(glsi32, 0), date.minute);
+    try testing.expectEqual(@as(glsi32, 0), date.second);
+}
+
+test "glk_time_to_date_utc preserves microsec" {
+    const time = glktimeval_t{ .high_sec = 0, .low_sec = 0, .microsec = 123456 };
+    var date: glkdate_t = undefined;
+    glk_time_to_date_utc(&time, &date);
+    try testing.expectEqual(@as(glsi32, 123456), date.microsec);
+}
+
+test "glk_time_to_date_utc null safety" {
+    var date: glkdate_t = undefined;
+    glk_time_to_date_utc(null, &date); // should not crash
+    glk_time_to_date_utc(null, null); // should not crash
+}
+
 export fn glk_time_to_date_local(time: ?*const glktimeval_t, date: ?*glkdate_t) callconv(.c) void {
     // For simplicity, treat local as UTC
     glk_time_to_date_utc(time, date);
