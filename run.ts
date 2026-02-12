@@ -99,7 +99,7 @@ export async function testClient() {
 
 // Run server regression tests (interpreter output validation)
 export async function testServer(...args: string[]) {
-    await $`bash packages/server/tests/run-regtest.sh ${args}`;
+    await $`bun packages/server/tests/regtest.ts ${args}`;
 }
 
 // Run all tests (Zig + client unit tests + E2E)
