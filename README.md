@@ -19,12 +19,12 @@ The combination of Zig, WASI, JSPI, and wasm-opt produces dramatically smaller b
 
 | Interpreter | emglken | wasiglk | Reduction |
 |-------------|---------|---------|-----------|
-| glulxe.wasm | 1.68 MB | 240 KB | **86% smaller** |
-| git.wasm | 1.68 MB | 249 KB | **85% smaller** |
-| hugo.wasm | 1.12 MB | 207 KB | **82% smaller** |
-| tads2.wasm | 3.9 MB | 671 KB | **83% smaller** |
-| tads3.wasm | 3.9 MB | 1.32 MB | **66% smaller** |
-| scare.wasm | 1.82 MB | 447 KB | **76% smaller** |
+| glulxe.wasm | 1.68 MB | 222 KB | **87% smaller** |
+| git.wasm | 1.68 MB | 245 KB | **86% smaller** |
+| hugo.wasm | 1.12 MB | 197 KB | **83% smaller** |
+| tads2.wasm | 3.9 MB | 669 KB | **83% smaller** |
+| tads3.wasm | 3.9 MB | 1.29 MB | **67% smaller** |
+| scare.wasm | 1.82 MB | 438 KB | **77% smaller** |
 
 **Why WASI?** Targeting [WASI](https://wasi.dev/) instead of Emscripten's custom runtime means portable binaries that run in browsers (via a shim), Node.js, Bun, Deno, and standalone runtimes like Wasmtime. WASI binaries are self-contained with no generated JavaScript glue code, and WASI is a W3C standard with broad industry backing rather than a project-specific runtime.
 

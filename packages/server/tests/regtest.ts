@@ -632,7 +632,7 @@ function getInterpreter(gameFile: string): string | null {
 
 function getInterpCmd(interpName: string): string[] {
     if (platform === "wasm") {
-        return ["wasmtime", "run", "--dir=.", join(interpDir, `${interpName}.wasm`), "--"];
+        return ["wasmtime", "run", "--dir=.", join(interpDir, `${interpName}.wasm`)];
     }
     return [join(interpDir, interpName)];
 }

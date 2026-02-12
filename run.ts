@@ -27,6 +27,7 @@ export async function build(...args: string[]) {
     await testZig();
     await buildZig(...args);
     await optimize();
+    await testServer();
 }
 
 // Build Zig interpreters (server package)
@@ -97,9 +98,9 @@ export async function testClient() {
     await $`bun test --cwd packages/client`;
 }
 
-// Run server regression tests (interpreter output validation)
+// Run server regression tests (interpreter output validation against WASM builds)
 export async function testServer(...args: string[]) {
-    await $`bun packages/server/tests/regtest.ts ${args}`;
+    await $`PLATFORM=wasm bun packages/server/tests/regtest.ts ${args}`;
 }
 
 // Run all tests (Zig + client unit tests + E2E)
@@ -229,7 +230,6 @@ export async function publish(dryRun: string = "") {
 export async function ci() {
     await clean();
     await check();
-    await testZig();
     await testClient();
     await build();
     await bundle();

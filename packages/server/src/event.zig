@@ -14,6 +14,41 @@ const keycode = types.keycode;
 const WindowData = state.WindowData;
 const allocator = state.allocator;
 
+// Convert char input value to Glk keycode.
+// For single characters (len=1), returns the character value directly.
+// For named keys ("return", "escape", etc.), returns the Glk keycode constant.
+fn charValueToKeycode(value: []const u8) glui32 {
+    if (value.len == 0) return keycode.Return;
+    if (value.len == 1) return value[0];
+
+    if (std.mem.eql(u8, value, "return")) return keycode.Return;
+    if (std.mem.eql(u8, value, "left")) return keycode.Left;
+    if (std.mem.eql(u8, value, "right")) return keycode.Right;
+    if (std.mem.eql(u8, value, "up")) return keycode.Up;
+    if (std.mem.eql(u8, value, "down")) return keycode.Down;
+    if (std.mem.eql(u8, value, "delete")) return keycode.Delete;
+    if (std.mem.eql(u8, value, "escape")) return keycode.Escape;
+    if (std.mem.eql(u8, value, "tab")) return keycode.Tab;
+    if (std.mem.eql(u8, value, "pageup")) return keycode.PageUp;
+    if (std.mem.eql(u8, value, "pagedown")) return keycode.PageDown;
+    if (std.mem.eql(u8, value, "home")) return keycode.Home;
+    if (std.mem.eql(u8, value, "end")) return keycode.End;
+    if (std.mem.eql(u8, value, "func1")) return keycode.Func1;
+    if (std.mem.eql(u8, value, "func2")) return keycode.Func2;
+    if (std.mem.eql(u8, value, "func3")) return keycode.Func3;
+    if (std.mem.eql(u8, value, "func4")) return keycode.Func4;
+    if (std.mem.eql(u8, value, "func5")) return keycode.Func5;
+    if (std.mem.eql(u8, value, "func6")) return keycode.Func6;
+    if (std.mem.eql(u8, value, "func7")) return keycode.Func7;
+    if (std.mem.eql(u8, value, "func8")) return keycode.Func8;
+    if (std.mem.eql(u8, value, "func9")) return keycode.Func9;
+    if (std.mem.eql(u8, value, "func10")) return keycode.Func10;
+    if (std.mem.eql(u8, value, "func11")) return keycode.Func11;
+    if (std.mem.eql(u8, value, "func12")) return keycode.Func12;
+
+    return keycode.Unknown;
+}
+
 // Convert terminator string to keycode (per GlkOte spec)
 fn terminatorToKeycode(terminator: ?[]const u8) glui32 {
     const term = terminator orelse return 0;
@@ -299,12 +334,12 @@ export fn glk_select(event: ?*event_t) callconv(.c) void {
     } else if (w.char_request) {
         event.?.type = evtype.CharInput;
         event.?.win = @ptrCast(w);
-        event.?.val1 = if (input_value.len > 0) input_value[0] else keycode.Return;
+        event.?.val1 = charValueToKeycode(input_value);
         w.char_request = false;
     } else if (w.char_request_uni) {
         event.?.type = evtype.CharInput;
         event.?.win = @ptrCast(w);
-        event.?.val1 = if (input_value.len > 0) input_value[0] else keycode.Return;
+        event.?.val1 = charValueToKeycode(input_value);
         w.char_request_uni = false;
     }
 }
@@ -472,6 +507,38 @@ test "keycodeToTerminator and terminatorToKeycode roundtrip" {
         const term_str = protocol.keycodeToTerminator(kc).?;
         try testing.expectEqual(kc, terminatorToKeycode(term_str));
     }
+}
+
+test "charValueToKeycode converts single characters" {
+    try testing.expectEqual(@as(glui32, 'a'), charValueToKeycode("a"));
+    try testing.expectEqual(@as(glui32, 'Z'), charValueToKeycode("Z"));
+    try testing.expectEqual(@as(glui32, ' '), charValueToKeycode(" "));
+    try testing.expectEqual(@as(glui32, '0'), charValueToKeycode("0"));
+}
+
+test "charValueToKeycode converts named special keys" {
+    try testing.expectEqual(keycode.Return, charValueToKeycode("return"));
+    try testing.expectEqual(keycode.Escape, charValueToKeycode("escape"));
+    try testing.expectEqual(keycode.Left, charValueToKeycode("left"));
+    try testing.expectEqual(keycode.Right, charValueToKeycode("right"));
+    try testing.expectEqual(keycode.Up, charValueToKeycode("up"));
+    try testing.expectEqual(keycode.Down, charValueToKeycode("down"));
+    try testing.expectEqual(keycode.Delete, charValueToKeycode("delete"));
+    try testing.expectEqual(keycode.Tab, charValueToKeycode("tab"));
+    try testing.expectEqual(keycode.PageUp, charValueToKeycode("pageup"));
+    try testing.expectEqual(keycode.PageDown, charValueToKeycode("pagedown"));
+    try testing.expectEqual(keycode.Home, charValueToKeycode("home"));
+    try testing.expectEqual(keycode.End, charValueToKeycode("end"));
+}
+
+test "charValueToKeycode converts function keys" {
+    try testing.expectEqual(keycode.Func1, charValueToKeycode("func1"));
+    try testing.expectEqual(keycode.Func12, charValueToKeycode("func12"));
+}
+
+test "charValueToKeycode handles edge cases" {
+    try testing.expectEqual(keycode.Return, charValueToKeycode(""));
+    try testing.expectEqual(keycode.Unknown, charValueToKeycode("unknown"));
 }
 
 // glk_exit is used by event handling

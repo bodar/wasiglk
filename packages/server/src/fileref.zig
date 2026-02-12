@@ -13,7 +13,7 @@ const allocator = state.allocator;
 
 export fn glk_fileref_create_temp(usage: glui32, rock: glui32) callconv(.c) frefid_t {
     var buf: [64]u8 = undefined;
-    const filename = std.fmt.bufPrint(&buf, "/tmp/glktmp_{d}", .{state.fileref_id_counter}) catch return null;
+    const filename = std.fmt.bufPrint(&buf, "glktmp_{d}", .{state.fileref_id_counter}) catch return null;
 
     const fref = allocator.create(FileRefData) catch return null;
     const filename_copy = allocator.dupe(u8, filename) catch {
