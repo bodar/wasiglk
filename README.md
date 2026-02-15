@@ -1,6 +1,6 @@
 # wasiglk
 
-**Work in Progress** - Interactive Fiction interpreters compiled to WebAssembly (WASI) using Zig.
+Interactive Fiction interpreters compiled to WebAssembly (WASI) using Zig.
 
 ## Overview
 
