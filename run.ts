@@ -24,6 +24,7 @@ export async function check() {
 }
 
 export async function build(...args: string[]) {
+    await $`bun install --ignore-scripts`.quiet();
     await testZig();
     await buildZig(...args);
     await optimize();
