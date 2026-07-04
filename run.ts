@@ -1,6 +1,6 @@
 #!/usr/bin/env ./bootstrap.sh
 import {$, spawn, file, write, Glob} from "bun";
-import {dirname, join} from "path";
+import {dirname, join, resolve} from "path";
 
 process.env.FORCE_COLOR = "1";
 
@@ -23,12 +23,11 @@ export async function check() {
     await $`bun run --bun tsgo --noEmit`;
 }
 
-export async function build(...args: string[]) {
-    await $`bun install --ignore-scripts`.quiet();
-    await testZig();
-    await buildZig(...args);
-    await optimize();
-    await testServer();
+// Full build pipeline. Delegates to mise tasks so dependencies and
+// incremental rebuilds (skip wasm-opt / regtests when inputs are unchanged)
+// are handled by mise. For custom zig flags, call `./run buildZig <flags>`.
+export async function build() {
+    await $`mise run build`;
 }
 
 // Build Zig interpreters (server package)
@@ -38,7 +37,12 @@ export async function buildZig(...args: string[]) {
     await $`zig build --build-file packages/server/build.zig --prefix packages/server/zig-out ${optimize} ${args}`;
 }
 
-// Optimize WASM binaries with Binaryen wasm-opt
+// Optimize WASM binaries with Binaryen wasm-opt.
+// Reads raw binaries from zig-out/bin and writes optimized copies to
+// zig-out/opt. Keeping inputs and outputs in separate directories lets mise
+// skip this (slow) step when the raw binaries are unchanged.
+const OPT_DIR = "packages/server/zig-out/opt";
+
 export async function optimize() {
     const glob = new Glob("packages/server/zig-out/bin/*.wasm");
     const wasmFiles = Array.from(glob.scanSync("."));
@@ -48,10 +52,13 @@ export async function optimize() {
         return;
     }
 
+    await $`mkdir -p ${OPT_DIR}`;
     console.log(`Optimizing ${wasmFiles.length} WASM files with wasm-opt...`);
     const wasmOpt = "./node_modules/.bin/wasm-opt";
 
     await Promise.all(wasmFiles.map(async (f) => {
+        const name = f.split('/').pop()!;
+        const out = join(OPT_DIR, name);
         const before = Bun.file(f).size;
         await $`${wasmOpt} -Oz \
             --enable-bulk-memory \
@@ -61,11 +68,11 @@ export async function optimize() {
             --enable-mutable-globals \
             --enable-reference-types \
             --enable-typed-function-references \
-            ${f} -o ${f}`.quiet();
-        const after = Bun.file(f).size;
+            ${f} -o ${out}`.quiet();
+        const after = Bun.file(out).size;
         const saved = before - after;
         const percent = Math.round(saved * 100 / before);
-        console.log(`  ${f.split('/').pop()}: ${before} -> ${after} (${percent}% smaller)`);
+        console.log(`  ${name}: ${before} -> ${after} (${percent}% smaller)`);
     }));
 }
 
@@ -74,11 +81,11 @@ export async function bundle() {
     const wasmDir = "packages/client/wasm";
     await $`mkdir -p ${wasmDir}`;
 
-    const glob = new Glob("packages/server/zig-out/bin/*.wasm");
+    const glob = new Glob(`${OPT_DIR}/*.wasm`);
     const wasmFiles = Array.from(glob.scanSync("."));
 
     if (wasmFiles.length === 0) {
-        throw new Error("No WASM files found - run build first");
+        throw new Error("No optimized WASM files found - run build first");
     }
 
     for (const f of wasmFiles) {
@@ -101,7 +108,8 @@ export async function testClient() {
 
 // Run server regression tests (interpreter output validation against WASM builds)
 export async function testServer(...args: string[]) {
-    await $`PLATFORM=wasm bun packages/server/tests/regtest.ts ${args}`;
+    // Absolute: regtest runs interpreters with cwd set to its own dir.
+    await $`PLATFORM=wasm INTERP_DIR=${resolve(OPT_DIR)} bun packages/server/tests/regtest.ts ${args}`;
 }
 
 // Run all tests (Zig + client unit tests + E2E)
@@ -138,6 +146,8 @@ export async function testHeaded(...args: string[]) {
 
 // Run the example/demo
 export async function demo() {
+    // Ensure the optimized wasm the server serves exists (incremental; ~0s if cached).
+    await $`mise run optimize`;
     await $`bun run packages/example/serve.ts`;
 }
 

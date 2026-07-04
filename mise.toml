@@ -3,4 +3,45 @@ bun = "latest"
 node = "latest"
 wasi-sdk = "33"
 wasmtime = "latest"
-zig = "latest"
+zig = "0.15.2"  # pinned: build.zig uses 0.15 APIs (addCSourceFiles etc.); 0.16 breaks it
+
+# Build pipeline. mise resolves the dependency DAG and skips tasks whose
+# declared `sources` are unchanged, giving incremental rebuilds:
+#   install -> buildZig -> optimize -> testServer
+#                       -> testZig
+# The actual work lives in run.ts; tasks invoke it and declare inputs/outputs.
+
+[tasks.install]
+run = "bun install --ignore-scripts"
+sources = ["package.json", "bun.lock"]
+outputs = ["node_modules/.bin/wasm-opt"]
+
+# No sources: zig tracks its own (submodule) dependencies precisely and a
+# no-op build is fast, so we always let zig decide whether to rebuild.
+[tasks.buildZig]
+depends = ["install"]
+run = "bun run.ts buildZig"
+
+# Slow step. Skipped unless zig actually rewrote a raw binary (zig stamps
+# outputs with content-addressed mtimes, so unchanged code => unchanged inputs).
+[tasks.optimize]
+depends = ["buildZig"]
+run = "bun run.ts optimize"
+sources = ["packages/server/zig-out/bin/*.wasm"]
+outputs = ["packages/server/zig-out/opt/*.wasm"]
+
+# No sources: relies on zig's own test-result caching (a false skip here would
+# hide a real test failure, so we never gate it on a hand-maintained glob).
+[tasks.testZig]
+depends = ["buildZig"]
+run = "bun run.ts testZig"
+
+# Regtests run against the optimized binaries. Skipped when neither the
+# optimized binaries nor the tests/fixtures have changed.
+[tasks.testServer]
+depends = ["optimize"]
+run = "bun run.ts testServer"
+sources = ["packages/server/zig-out/opt/*.wasm", "packages/server/tests/**/*"]
+
+[tasks.build]
+depends = ["testZig", "testServer"]

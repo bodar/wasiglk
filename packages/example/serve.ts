@@ -13,7 +13,7 @@ const paths: Record<string, string> = {
   '/': join(EXAMPLE_DIR, 'public/index.html'),
   '/index.html': join(EXAMPLE_DIR, 'public/index.html'),
   '/advent.ulx': join(ROOT_DIR, 'tests/advent.ulx'),
-  '/glulxe.wasm': join(ROOT_DIR, 'packages/server/zig-out/bin/glulxe.wasm'),
+  '/glulxe.wasm': join(ROOT_DIR, 'packages/server/zig-out/opt/glulxe.wasm'),
 };
 
 // MIME types
