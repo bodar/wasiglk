@@ -8,6 +8,7 @@ import { BlorbParser } from './blorb';
 import { detectFormat, type FormatInfo, type StoryFormat } from './format';
 import type { Metrics, RemGlkUpdate } from './protocol';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './worker/messages';
+import type { TranscriptStanza } from './worker/transcript';
 
 /** Configuration for creating a WasiGlk client instance. */
 export interface ClientConfig {
@@ -35,6 +36,31 @@ export interface ClientConfig {
   metrics?: Metrics;
   /** Features the display supports (per GlkOte spec). Defaults to ['timer', 'graphics', 'graphicswin', 'hyperlinks']. */
   support?: string[];
+  /**
+   * Record a `.glktra` transcript stream of the session (default: false).
+   * When enabled, iterate {@link WasiGlkClient.transcript} to receive the
+   * recorded stanzas; the library only produces them — persistence is the
+   * consumer's responsibility.
+   */
+  recordTranscript?: boolean;
+  /** Label stored in each transcript stanza. Defaults to storyUrl ?? storyId. */
+  transcriptLabel?: string;
+}
+
+/** Fully-resolved construction options, assembled by {@link WasiGlkClient.create}. */
+interface WasiGlkClientOptions {
+  storyData: Uint8Array;
+  interpreterData: ArrayBuffer;
+  formatInfo: FormatInfo;
+  blorb: BlorbParser | null;
+  workerUrl: string | URL;
+  storyId: string;
+  filesystem: 'auto' | 'opfs' | 'memory' | 'dialog';
+  metrics: Metrics;
+  support: string[] | undefined;
+  recordTranscript: boolean;
+  sessionId: string;
+  transcriptLabel: string;
 }
 
 /**
@@ -56,32 +82,36 @@ export class WasiGlkClient {
   private running = false;
   private pendingUpdates: RemGlkUpdate[] = [];
   private updateResolve: ((value: IteratorResult<RemGlkUpdate>) => void) | null = null;
+  private pendingStanzas: TranscriptStanza[] = [];
+  private transcriptResolve: ((value: TranscriptStanza[] | null) => void) | null = null;
+  private transcriptDone = false;
   private workerUrl: string | URL;
   private storyId: string;
   private filesystem: 'auto' | 'opfs' | 'memory' | 'dialog';
   private metrics: Metrics;
   private support?: string[];
+  private recordTranscript: boolean;
+  private sessionId: string;
+  private transcriptLabel: string;
 
-  private constructor(
-    storyData: Uint8Array,
-    interpreterData: ArrayBuffer,
-    formatInfo: FormatInfo,
-    blorb: BlorbParser | null,
-    workerUrl: string | URL,
-    storyId: string,
-    filesystem: 'auto' | 'opfs' | 'memory' | 'dialog',
-    metrics: Metrics,
-    support?: string[],
-  ) {
-    this.storyData = storyData;
-    this.interpreterData = interpreterData;
-    this.formatInfo = formatInfo;
-    this.blorb = blorb;
-    this.workerUrl = workerUrl;
-    this.storyId = storyId;
-    this.filesystem = filesystem;
-    this.metrics = metrics;
-    this.support = support;
+  private constructor(options: WasiGlkClientOptions) {
+    this.storyData = options.storyData;
+    this.interpreterData = options.interpreterData;
+    this.formatInfo = options.formatInfo;
+    this.blorb = options.blorb;
+    this.workerUrl = options.workerUrl;
+    this.storyId = options.storyId;
+    this.filesystem = options.filesystem;
+    this.metrics = options.metrics;
+    this.support = options.support;
+    this.recordTranscript = options.recordTranscript;
+    this.sessionId = options.sessionId;
+    this.transcriptLabel = options.transcriptLabel;
+  }
+
+  /** The unique id for this play session (used as `sessionId` in stanzas). */
+  get session(): string {
+    return this.sessionId;
   }
 
   /**
@@ -149,7 +179,24 @@ export class WasiGlkClient {
     const versionHash = hashBytes(storyData).toString(16).padStart(8, '0');
     const storyId = `${gameName}/${versionHash}`;
 
-    return new WasiGlkClient(executableData, interpreterData, formatInfo, blorb, config.workerUrl, storyId, config.filesystem ?? 'auto', config.metrics ?? { width: 80, height: 24 }, config.support);
+    // Unique per-play-session id, distinct from the per-story-version storyId.
+    const sessionId = crypto.randomUUID();
+    const transcriptLabel = config.transcriptLabel ?? storyUrl ?? storyId;
+
+    return new WasiGlkClient({
+      storyData: executableData,
+      interpreterData,
+      formatInfo,
+      blorb,
+      workerUrl: config.workerUrl,
+      storyId,
+      filesystem: config.filesystem ?? 'auto',
+      metrics: config.metrics ?? { width: 80, height: 24 },
+      support: config.support,
+      recordTranscript: config.recordTranscript ?? false,
+      sessionId,
+      transcriptLabel,
+    });
   }
 
   /** The detected format and interpreter for the loaded story. */
@@ -294,7 +341,7 @@ export class WasiGlkClient {
 
       this.worker.onerror = (e: ErrorEvent) => {
         this.pendingUpdates.push({ type: 'error', gen: 0, message: e.message || 'Worker error' });
-        this.resolveNextUpdate();
+        this.finish();
       };
 
       const initMessage: MainToWorkerMessage = {
@@ -306,6 +353,9 @@ export class WasiGlkClient {
         support: this.support,
         storyId: this.storyId,
         filesystem: this.filesystem,
+        recordTranscript: this.recordTranscript,
+        sessionId: this.sessionId,
+        transcriptLabel: this.transcriptLabel,
       };
       this.worker.postMessage(initMessage, [this.interpreterData]);
 
@@ -322,9 +372,55 @@ export class WasiGlkClient {
         }
       }
     } finally {
-      this.running = false;
+      // End both streams, in case no 'exit'/'error' message arrived
+      // (explicit termination, or the consumer broke the loop early).
+      this.finish();
       this.worker?.terminate();
       this.worker = null;
+    }
+  }
+
+  /** End the session: terminate both the update and transcript streams. */
+  private finish(): void {
+    this.running = false;
+    this.transcriptDone = true;
+    this.resolveNextUpdate();
+    this.resolveNextTranscript();
+  }
+
+  /**
+   * Stream of recorded `.glktra` transcript stanzas, when
+   * {@link ClientConfig.recordTranscript} is enabled.
+   *
+   * Each pull yields **all** stanzas accumulated since the previous pull
+   * (always at least one): when the consumer keeps up, arrays hold a single
+   * stanza; when it falls behind, the stream self-batches. Batch boundaries are
+   * a timing artifact and carry no meaning — do not key off the grouping.
+   *
+   * Requires {@link updates} to be iterated concurrently — that call starts the
+   * worker and drives the session that produces these stanzas; without it this
+   * stream yields nothing and never ends. The stream ends when the session
+   * exits or errors.
+   *
+   * The library only produces stanzas; persist them however you like — e.g.
+   * concatenate `JSON.stringify(stanza) + "\n"` per stanza to build a `.glktra`
+   * file.
+   */
+  async *transcript(): AsyncIterableIterator<TranscriptStanza[]> {
+    if (!this.recordTranscript) return; // nothing will ever be produced
+    while (!this.transcriptDone || this.pendingStanzas.length > 0) {
+      if (this.pendingStanzas.length > 0) {
+        const batch = this.pendingStanzas;
+        this.pendingStanzas = [];
+        yield batch;
+      } else {
+        const batch = await new Promise<TranscriptStanza[] | null>(resolve => {
+          this.transcriptResolve = resolve;
+          if (this.transcriptDone) resolve(null);
+        });
+        if (batch === null) break;
+        yield batch;
+      }
     }
   }
 
@@ -335,12 +431,17 @@ export class WasiGlkClient {
         this.resolveNextUpdate();
         break;
       case 'error':
+        // A worker error ends the session; deliver the error update, then
+        // terminate both streams (the worker sends nothing further).
         this.pendingUpdates.push({ type: 'error', gen: 0, message: msg.message });
-        this.resolveNextUpdate();
+        this.finish();
+        break;
+      case 'transcript':
+        this.pendingStanzas.push(msg.stanza);
+        this.resolveNextTranscript();
         break;
       case 'exit':
-        this.running = false;
-        this.resolveNextUpdate();
+        this.finish();
         break;
       case 'fileDialogRequest':
         this.handleFileDialogRequest(msg.filemode, msg.filetype);
@@ -412,6 +513,19 @@ export class WasiGlkClient {
       resolve({ value: this.pendingUpdates.shift()!, done: false });
     } else if (!this.running) {
       resolve({ value: undefined as any, done: true });
+    }
+  }
+
+  private resolveNextTranscript(): void {
+    if (!this.transcriptResolve) return;
+    const resolve = this.transcriptResolve;
+    this.transcriptResolve = null;
+    if (this.pendingStanzas.length > 0) {
+      const batch = this.pendingStanzas;
+      this.pendingStanzas = [];
+      resolve(batch);
+    } else if (this.transcriptDone) {
+      resolve(null);
     }
   }
 }

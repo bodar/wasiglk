@@ -58,6 +58,9 @@
 export { WasiGlkClient, createClient } from './client';
 export type { ClientConfig } from './client';
 
+// Transcript recording (.glktra)
+export type { TranscriptStanza } from './worker/transcript';
+
 // Protocol types (raw RemGlk protocol)
 export type {
   RemGlkUpdate,

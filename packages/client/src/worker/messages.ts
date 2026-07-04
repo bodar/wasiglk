@@ -4,12 +4,13 @@
 
 import type { Metrics, RemGlkUpdate } from '../protocol';
 import type { FilesystemMode } from './storage';
+import type { TranscriptStanza } from './transcript';
 
 export type { FilesystemMode };
 
 /** Messages from main thread to worker */
 export type MainToWorkerMessage =
-  | { type: 'init'; interpreter: ArrayBuffer; story: Uint8Array; args: string[]; metrics: Metrics; support?: string[]; storyId: string; filesystem: FilesystemMode }
+  | { type: 'init'; interpreter: ArrayBuffer; story: Uint8Array; args: string[]; metrics: Metrics; support?: string[]; storyId: string; filesystem: FilesystemMode; recordTranscript?: boolean; sessionId?: string; transcriptLabel?: string }
   | { type: 'input'; value: string }
   | { type: 'arrange'; metrics: Metrics }
   | { type: 'mouse'; windowId: number; x: number; y: number }
@@ -28,5 +29,7 @@ export type WorkerToMainMessage =
   | { type: 'update'; data: RemGlkUpdate }
   | { type: 'error'; message: string }
   | { type: 'exit'; code: number }
+  // Transcript recording stanza (when recordTranscript is enabled)
+  | { type: 'transcript'; stanza: TranscriptStanza }
   // File dialog request
   | { type: 'fileDialogRequest'; filemode: FileDialogMode; filetype: 'save' | 'data' | 'transcript' | 'command' };

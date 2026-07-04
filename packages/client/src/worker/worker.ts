@@ -27,6 +27,7 @@ import {
 import { AsyncFSAFile } from './storage/async-fsa-file';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './messages';
 import type { InputEvent, RemGlkUpdate } from '../protocol';
+import { TranscriptRecorder } from './transcript';
 
 let inputResolve: ((value: string) => void) | null = null;
 let generation = 0;
@@ -143,8 +144,18 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
     // Initialize storage and get existing files
     const rootContents = await storageProvider.initialize();
 
-    // stdin: async for JSPI
-    const stdin = new AsyncStdinFd(async () => {
+    // Transcript recorder (optional): pairs every input fed to the interpreter
+    // with the output update it produces, emitting `.glktra` stanzas.
+    const recorder = msg.recordTranscript
+      ? new TranscriptRecorder(
+          msg.sessionId ?? crypto.randomUUID(),
+          msg.transcriptLabel ?? msg.storyId,
+          stanza => post({ type: 'transcript', stanza }),
+        )
+      : null;
+
+    // The single funnel producing every stdin string the interpreter reads.
+    const provideInput = async (): Promise<string> => {
       if (generation === 0) {
         generation = 1;
         return JSON.stringify({
@@ -175,7 +186,19 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
       }
 
       return new Promise<string>(resolve => { inputResolve = resolve; });
-    });
+    };
+
+    // stdin: async for JSPI. When recording, capture every input string fed to
+    // the interpreter (init/line/char/timer/arrange/mouse/hyperlink/special).
+    const stdin = new AsyncStdinFd(
+      recorder
+        ? async () => {
+            const input = await provideInput();
+            recorder.recordInput(input, Date.now());
+            return input;
+          }
+        : provideInput,
+    );
 
     // stdout: parse JSON updates, batching all output from one interpreter turn
     let pendingBatch: RemGlkUpdate[] = [];
@@ -204,7 +227,9 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
             batchScheduled = false;
             const batch = pendingBatch;
             pendingBatch = [];
-            post({ type: 'update', data: mergeRemGlkUpdates(batch) });
+            const merged = mergeRemGlkUpdates(batch);
+            recorder?.recordOutput(merged, Date.now());
+            post({ type: 'update', data: merged });
           });
         }
       } catch {
