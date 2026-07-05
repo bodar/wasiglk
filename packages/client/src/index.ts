@@ -55,11 +55,16 @@
  */
 
 // Main client API
-export { WasiGlkClient, createClient } from './client';
+export { WasiGlkClient, createClient, createReplayClient } from './client';
 export type { ClientConfig } from './client';
 
 // Transcript recording (.glktra)
 export type { TranscriptStanza } from './worker/transcript';
+
+// Transcript serialization, parsing, and replay (.glktra)
+export { serializeGlktra, parseGlktra, inputsFromGlktra } from './glktra';
+export type { GlktraSource } from './glktra';
+export type { ReplayEvent } from './worker/replay-queue';
 
 // Protocol types (raw RemGlk protocol)
 export type {

@@ -9,6 +9,8 @@ import { detectFormat, type FormatInfo, type StoryFormat } from './format';
 import type { Metrics, RemGlkUpdate } from './protocol';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './worker/messages';
 import type { TranscriptStanza } from './worker/transcript';
+import type { ReplayEvent } from './worker/replay-queue';
+import { inputsFromGlktra } from './glktra';
 
 /** Configuration for creating a WasiGlk client instance. */
 export interface ClientConfig {
@@ -45,6 +47,16 @@ export interface ClientConfig {
   recordTranscript?: boolean;
   /** Label stored in each transcript stanza. Defaults to storyUrl ?? storyId. */
   transcriptLabel?: string;
+  /**
+   * Recorded `.glktra` input events to replay through the interpreter before
+   * falling through to live input. Each event is fed to the interpreter's stdin
+   * verbatim — exact gens, timer ticks and file-dialog responses — so a
+   * deterministic interpreter reproduces the recorded session. Once the
+   * recording is exhausted the session continues live (input from
+   * {@link WasiGlkClient.sendInput} etc.). Build this from a `.glktra` stream
+   * with {@link inputsFromGlktra}, or use {@link WasiGlkClient.fromGlktra}.
+   */
+  replayInputs?: ReplayEvent[];
 }
 
 /** Fully-resolved construction options, assembled by {@link WasiGlkClient.create}. */
@@ -61,6 +73,7 @@ interface WasiGlkClientOptions {
   recordTranscript: boolean;
   sessionId: string;
   transcriptLabel: string;
+  replayInputs: ReplayEvent[] | undefined;
 }
 
 /**
@@ -93,6 +106,7 @@ export class WasiGlkClient {
   private recordTranscript: boolean;
   private sessionId: string;
   private transcriptLabel: string;
+  private replayInputs?: ReplayEvent[];
 
   private constructor(options: WasiGlkClientOptions) {
     this.storyData = options.storyData;
@@ -107,6 +121,7 @@ export class WasiGlkClient {
     this.recordTranscript = options.recordTranscript;
     this.sessionId = options.sessionId;
     this.transcriptLabel = options.transcriptLabel;
+    this.replayInputs = options.replayInputs;
   }
 
   /** The unique id for this play session (used as `sessionId` in stanzas). */
@@ -196,7 +211,28 @@ export class WasiGlkClient {
       recordTranscript: config.recordTranscript ?? false,
       sessionId,
       transcriptLabel,
+      replayInputs: config.replayInputs,
     });
+  }
+
+  /**
+   * Create a client that replays a `.glktra` recording, then continues live.
+   *
+   * Convenience over {@link createClient}: parses the recording's input events
+   * ({@link inputsFromGlktra}) and passes them as {@link ClientConfig.replayInputs}.
+   * Iterate {@link updates} as usual — the first updates are the interpreter's
+   * responses to the recorded input (pulled at your own pace, not wall-clock),
+   * and once the recording runs out `sendInput` and friends drive it live.
+   *
+   * @param config - Client configuration (without `replayInputs`).
+   * @param glktra - The `.glktra` recording as a byte stream or chunk iterable.
+   */
+  static async fromGlktra(
+    config: Omit<ClientConfig, 'replayInputs'>,
+    glktra: string | ReadableStream<Uint8Array> | AsyncIterable<Uint8Array | string>,
+  ): Promise<WasiGlkClient> {
+    const replayInputs = await inputsFromGlktra(glktra);
+    return WasiGlkClient.create({ ...config, replayInputs });
   }
 
   /** The detected format and interpreter for the loaded story. */
@@ -356,6 +392,7 @@ export class WasiGlkClient {
         recordTranscript: this.recordTranscript,
         sessionId: this.sessionId,
         transcriptLabel: this.transcriptLabel,
+        replayInputs: this.replayInputs,
       };
       this.worker.postMessage(initMessage, [this.interpreterData]);
 
@@ -585,4 +622,31 @@ function getFileTypeInfo(filetype: 'save' | 'data' | 'transcript' | 'command'): 
  */
 export async function createClient(config: ClientConfig): Promise<WasiGlkClient> {
   return WasiGlkClient.create(config);
+}
+
+/**
+ * Create a client that replays a `.glktra` recording, then continues live.
+ *
+ * Thin wrapper over {@link WasiGlkClient.fromGlktra}: loads the story and
+ * interpreter as {@link createClient} does, but re-drives the interpreter with
+ * the recorded input first. Iterate {@link WasiGlkClient.updates} as usual.
+ *
+ * @param config - Client configuration (without `replayInputs`).
+ * @param glktra - The `.glktra` recording as a byte stream or chunk iterable.
+ *
+ * @example
+ * ```typescript
+ * const res = await fetch('/recordings/session.glktra');
+ * const client = await createReplayClient(
+ *   { storyUrl: '/stories/advent.ulx', workerUrl: '/worker.js' },
+ *   res.body!,
+ * );
+ * for await (const update of client.updates()) { /* render *\/ }
+ * ```
+ */
+export async function createReplayClient(
+  config: Omit<ClientConfig, 'replayInputs'>,
+  glktra: string | ReadableStream<Uint8Array> | AsyncIterable<Uint8Array | string>,
+): Promise<WasiGlkClient> {
+  return WasiGlkClient.fromGlktra(config, glktra);
 }

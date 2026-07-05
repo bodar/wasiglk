@@ -5,12 +5,13 @@
 import type { Metrics, RemGlkUpdate } from '../protocol';
 import type { FilesystemMode } from './storage';
 import type { TranscriptStanza } from './transcript';
+import type { ReplayEvent } from './replay-queue';
 
 export type { FilesystemMode };
 
 /** Messages from main thread to worker */
 export type MainToWorkerMessage =
-  | { type: 'init'; interpreter: ArrayBuffer; story: Uint8Array; args: string[]; metrics: Metrics; support?: string[]; storyId: string; filesystem: FilesystemMode; recordTranscript?: boolean; sessionId?: string; transcriptLabel?: string }
+  | { type: 'init'; interpreter: ArrayBuffer; story: Uint8Array; args: string[]; metrics: Metrics; support?: string[]; storyId: string; filesystem: FilesystemMode; recordTranscript?: boolean; sessionId?: string; transcriptLabel?: string; replayInputs?: ReplayEvent[] }
   | { type: 'input'; value: string }
   | { type: 'arrange'; metrics: Metrics }
   | { type: 'mouse'; windowId: number; x: number; y: number }

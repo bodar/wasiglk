@@ -28,6 +28,7 @@ import { AsyncFSAFile } from './storage/async-fsa-file';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './messages';
 import type { InputEvent, RemGlkUpdate } from '../protocol';
 import { TranscriptRecorder } from './transcript';
+import { ReplayQueue } from './replay-queue';
 
 let inputResolve: ((value: string) => void) | null = null;
 let generation = 0;
@@ -154,8 +155,29 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
         )
       : null;
 
+    // Recorded inputs to replay verbatim before falling through to live input.
+    // Symmetric with the recorder above: it taps this funnel's output, the
+    // queue supplies its input. Empty unless msg.replayInputs is provided.
+    const replayQueue = new ReplayQueue(msg.replayInputs);
+
     // The single funnel producing every stdin string the interpreter reads.
     const provideInput = async (): Promise<string> => {
+      // Replay: feed the next recorded event verbatim (exact gen, timer ticks,
+      // dialog answers) until the recording is exhausted, then resume live.
+      if (replayQueue.active) {
+        const next = replayQueue.next()!;
+        const genVal = (next as { gen?: unknown }).gen;
+        if (typeof genVal === 'number') generation = genVal;
+        // A recorded dialog answer stands in for re-prompting storage; clear
+        // the flag so a later live turn can't re-trigger an answered dialog.
+        if ((next as { type?: unknown }).type === 'specialresponse') pendingFileDialog = null;
+        // On drain, arm the live timer with the last interval the game asked
+        // for during replay (a later output may still override it below).
+        const deferred = replayQueue.takeDeferredTimer();
+        if (deferred) handleTimerUpdate(deferred.interval);
+        return JSON.stringify(next);
+      }
+
       if (generation === 0) {
         generation = 1;
         return JSON.stringify({
@@ -213,7 +235,13 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
         if (update.input && update.input.length > 0) {
           currentInputRequest = { windowId: update.input[0].id, type: update.input[0].type };
         }
-        if (update.timer !== undefined) handleTimerUpdate(update.timer);
+        if (update.timer !== undefined) {
+          // During replay, recorded `timer` events supply the ticks — stash the
+          // interval instead of arming the live setInterval that would race the
+          // drain; ReplayQueue applies it when the recording runs out.
+          if (replayQueue.active) replayQueue.deferTimer(update.timer);
+          else handleTimerUpdate(update.timer);
+        }
         if (update.specialinput) {
           pendingFileDialog = { filemode: update.specialinput.filemode as FileMode, filetype: update.specialinput.filetype as FileType };
         }
