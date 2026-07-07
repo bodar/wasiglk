@@ -144,6 +144,7 @@ export fn glk_window_close(win_opaque: winid_t, result: ?*stream_result_t) callc
     if (win == null) return;
     const w = win.?;
 
+    // Report stream statistics for the explicitly-closed window.
     if (result) |r| {
         if (w.stream) |s| {
             r.readcount = s.readcount;
@@ -154,33 +155,81 @@ export fn glk_window_close(win_opaque: winid_t, result: ?*stream_result_t) callc
         }
     }
 
-    // Close associated stream
+    // Flush any buffered output before the window tree changes underneath it.
+    protocol.flushTextBuffer();
+
+    // Per the Glk spec, closing a window also removes its parent pair window;
+    // the sibling is promoted into the pair's slot in the tree. Skipping this
+    // leaves the parent (and grandparent) holding dangling child/key pointers
+    // to the freed window, which recalculateLayout() then dereferences and
+    // writes through -> heap corruption.
+    if (w.parent) |p| {
+        const sibling = if (p.child1 == w) p.child2 else p.child1;
+        const grandparent = p.parent;
+
+        if (grandparent) |gp| {
+            if (gp.child1 == p) gp.child1 = sibling else gp.child2 = sibling;
+            if (gp.split_key == p or gp.split_key == w) gp.split_key = sibling;
+        } else {
+            state.root_window = sibling;
+        }
+        if (sibling) |s| s.parent = grandparent;
+
+        // Free the now-defunct parent pair window. Non-recursive: the sibling
+        // subtree survives and must not be torn down.
+        freeWindow(p);
+    } else {
+        // Closing the root window tears down the whole tree.
+        state.root_window = null;
+    }
+
+    // Destroy the closed window and all of its descendants.
+    closeSubtree(w);
+
+    // Rebuild layout for the surviving tree and notify the client.
+    recalculateLayout();
+    queueAllWindowUpdates();
+    protocol.sendUpdate();
+}
+
+/// Tear down a single window: close its stream, unregister it, free buffers,
+/// unlink it from the flat window list, and destroy it. Does NOT touch the
+/// window tree (parent/child pointers); callers are responsible for structure.
+fn freeWindow(w: *WindowData) void {
     if (w.stream) |s| {
         s.win = null;
         stream.glk_stream_close(@ptrCast(s), null);
         w.stream = null;
     }
 
-    // Unregister from dispatch system
     if (dispatch.object_unregister_fn) |unregister_fn| {
         unregister_fn(@ptrCast(w), dispatch.gidisp_Class_Window, w.dispatch_rock);
     }
 
-    // Free grid buffer if allocated
-    if (w.grid_buffer) |buf| {
-        allocator.destroy(buf);
-    }
-    if (w.grid_dirty) |dirty| {
-        allocator.destroy(dirty);
-    }
+    if (w.grid_buffer) |buf| allocator.destroy(buf);
+    if (w.grid_dirty) |dirty| allocator.destroy(dirty);
 
-    // Remove from list
+    // Unlink from the flat window list.
     if (w.prev) |p| p.next = w.next else state.window_list = w.next;
     if (w.next) |n| n.prev = w.prev;
 
+    // Drop any surviving global references to this window.
+    if (state.text_buffer_win == w) {
+        state.text_buffer_len = 0;
+        state.text_buffer_win = null;
+    }
     if (state.root_window == w) state.root_window = null;
 
     allocator.destroy(w);
+}
+
+/// Recursively close a window and all of its descendants (depth-first).
+fn closeSubtree(w: *WindowData) void {
+    if (w.win_type == types.wintype.Pair) {
+        if (w.child1) |c| closeSubtree(c);
+        if (w.child2) |c| closeSubtree(c);
+    }
+    freeWindow(w);
 }
 
 export fn glk_window_get_size(win_opaque: winid_t, widthptr: ?*glui32, heightptr: ?*glui32) callconv(.c) void {

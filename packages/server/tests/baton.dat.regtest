@@ -1,0 +1,26 @@
+# ScottFree (Scott Adams) regression test.
+#
+# Game: baton.dat -- "The Golden Baton", #1 of Brian Howarth's Mysterious
+# Adventures (1981). Text-only Scott Adams format database, freely
+# distributable (the author permitted upload to the IF Archive). Source:
+# https://ifarchive.org/if-archive/scott-adams/games/scottfree/mysterious.tar.gz
+#
+# Regression guard for the glk_window_close pair-window bug (window.zig):
+# an arrange event makes ScottFree close and reopen its status/graphics
+# windows. glk_window_close used to destroy a window without collapsing its
+# parent pair, leaving a dangling child pointer that recalculateLayout() then
+# wrote through -- corrupting the heap and trapping ("memory access out of
+# bounds") on the NEXT command. This test arranges, then moves, and must not
+# crash.
+
+** game: baton.dat
+** remformat: yes
+
+* arrange-then-move
+{status} I'm in a dense SPOOKY Forest
+>{arrange} 900 480
+{status} I'm in a dense SPOOKY Forest
+> north
+{status} I'm by a Stream
+> south
+{status} I'm in a dense SPOOKY Forest

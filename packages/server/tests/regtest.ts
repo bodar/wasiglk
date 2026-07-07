@@ -627,6 +627,7 @@ function getInterpreter(gameFile: string): string | null {
     if (gameFile.endsWith(".ulx")) return "glulxe";
     if (/\.z\d$/.test(gameFile)) return "fizmo";
     if (gameFile.endsWith(".hex")) return "hugo";
+    if (gameFile.endsWith(".dat")) return "scott"; // Scott Adams format databases
     return null;
 }
 
