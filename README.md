@@ -94,6 +94,38 @@ The following libraries are used to support the interpreters above:
 - [wasi-sdk#565](https://github.com/WebAssembly/wasi-sdk/issues/565) - C++ exception support tracking issue
 - [Build instructions gist](https://gist.github.com/yerzham/302efcec6a2e82c1e8de4aed576ea29d) - How to build wasi-sdk with exception support (requires LLVM 21.1.5+)
 
+## Converting AGT games (`agt2agx`)
+
+Classic AGT games are **multi-file**: a set named after the game (`GAME.DA1`–`GAME.DA6`,
+`GAME.TTL`, `GAME.D$$`, optionally `GAME.CFG`/`GAME.OPT`/`GAME.VOC`). No single member runs
+on its own, so a host that serves one file (or the Agility interpreter given one file) can't
+run them. AGiliTy's own portable container is **AGX** — a single file the interpreter loads
+directly. The `agt2agx` tool (from AGiliTy) packs a multi-file game into one AGX.
+
+wasiglk builds `agt2agx` as a standalone WASI command (`zig build agt2agx`, bundled to
+`wasm/agt2agx.wasm`) and exposes `agtToAgx()`, which runs it entirely in memory — no disk,
+no network — so it works in a Cloudflare Worker or any WASI-capable JS runtime.
+
+```typescript
+import { agtToAgx } from '@wasiglk/client';
+
+// `agtModule` is a compiled WebAssembly.Module for wasm/agt2agx.wasm.
+// On Cloudflare Workers this must be a *statically imported* (bundled) module —
+// Workers can't compile wasm from bytes at runtime:
+//     import agtModule from './agt2agx.wasm';   // wrangler CompiledWasm rule
+// Off-worker (Node/Bun) you can compile it yourself:
+//     const agtModule = new WebAssembly.Module(readFileSync(...));
+
+// `files` is the game's members keyed by name; case-insensitive, must include a .da1.
+const agx = agtToAgx(agtModule, {
+  'GAME.DA1': da1Bytes, 'GAME.DA2': da2Bytes, /* … */ 'GAME.TTL': ttlBytes, 'GAME.D$$': dssBytes,
+});
+// -> Uint8Array AGX (signature 0x51C1C758); feed to the `agility` interpreter as the story.
+```
+
+A pre-compiled AGX (some archives already ship one) needs no conversion — detect it with
+`detectFormatFromData` (recognises the AGX signature) and run it directly.
+
 ## Browser Usage
 
 The `@wasiglk/client` package provides a TypeScript client for running interpreters in the browser using JSPI.
