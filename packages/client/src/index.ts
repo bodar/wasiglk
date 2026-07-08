@@ -94,6 +94,9 @@ export type { BlorbImage, BlorbResource } from './blorb';
 export { detectFormat, detectFormatFromUrl, detectFormatFromData } from './format';
 export type { StoryFormat, FormatInfo } from './format';
 
+// AGT → AGX conversion (server-side; pack multi-file AGT into a single AGX)
+export { agtToAgx } from './agt';
+
 // Renderers (optional)
 export type { GraphicsRenderer } from './renderers/types';
 export { colorToCSS } from './renderers/types';

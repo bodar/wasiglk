@@ -6,7 +6,8 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./worker": "./src/worker/worker.ts"
+    "./worker": "./src/worker/worker.ts",
+    "./wasm/agt2agx.wasm": "./wasm/agt2agx.wasm"
   },
   "files": [
     "src",

@@ -126,6 +126,13 @@ const MAGIC_SIGNATURES: Array<{
     format: 'tads3',
     interpreter: 'tads3',
   },
+  // AGX (AGiliTy): file signature 0x51C1C758, little-endian
+  {
+    bytes: [0x58, 0xc7, 0xc1, 0x51],
+    offset: 0,
+    format: 'agt',
+    interpreter: 'agility',
+  },
 ];
 
 /**

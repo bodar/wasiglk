@@ -241,9 +241,11 @@ export async function publish(dryRun: string = "") {
 export async function ci() {
     await clean();
     await check();
-    await testClient();
+    // Build + bundle before client tests: some client tests (AGT→AGX conversion)
+    // load a bundled interpreter/tool wasm, which build()+bundle() produce.
     await build();
     await bundle();
+    await testClient();
     await publish();
 }
 

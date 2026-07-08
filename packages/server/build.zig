@@ -65,6 +65,14 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&install.step);
     }
 
+    // agt2agx: standalone AGT->AGX converter (no Glk). Runs server-side in the
+    // Cloudflare Worker to pack classic multi-file AGT games into a single
+    // portable .agx that the agility interpreter loads. Not an interpreter.
+    const agt2agx = buildAgt2Agx(b, target, optimize);
+    const agt2agx_install = b.addInstallArtifact(agt2agx, .{});
+    b.step("agt2agx", "Build agt2agx AGT->AGX converter tool").dependOn(&agt2agx_install.step);
+    b.getInstallStep().dependOn(&agt2agx_install.step);
+
     // Scare (needs zlib + setjmp, works on both native and WASM)
     const scare = buildScare(b, target, optimize, wasi_glk, zlib);
     const scare_install = b.addInstallArtifact(scare, .{});
@@ -810,6 +818,46 @@ fn buildAgility(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
 
     addGlkSupport(exe, b, wasi_glk, false);
     exe.addIncludePath(b.path("../garglk/terps/agility"));
+
+    return exe;
+}
+
+// Build the agt2agx converter as a plain WASI command (no Glk, no wasi_glk).
+// Uses AGiliTy's LINUX config (generous MAXSTRUC/buffers, matches native output)
+// but wasi-libc lacks popen/pclose that filename.c's dead pipe code references;
+// wasi_compat.{h,c} (force-included) supplies prototypes + no-op stubs.
+fn buildAgt2Agx(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+    const exe = b.addExecutable(.{
+        .name = "agt2agx",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+    });
+
+    exe.addCSourceFiles(.{
+        .root = b.path("../garglk/terps/agility"),
+        .files = &.{
+            "agt2agx.c", "agilstub.c", "agtread.c",  "gamedata.c",
+            "util.c",    "agxfile.c",  "auxfile.c",   "filename.c",
+        },
+        .flags = &.{
+            "-DLINUX",
+            "-w",
+            // filename.c calls popen/pclose (dead pipe code, never reached by the
+            // converter). wasi-libc doesn't declare them; downgrade the resulting
+            // implicit-declaration errors. wasi_compat.c provides the link symbols.
+            "-Wno-implicit-function-declaration",
+            "-Wno-int-conversion",
+        },
+    });
+
+    // Owned compatibility stubs (see agt2agx/wasi_compat.h).
+    exe.addCSourceFiles(.{
+        .root = b.path("agt2agx"),
+        .files = &.{"wasi_compat.c"},
+    });
+
+    exe.addIncludePath(b.path("../garglk/terps/agility"));
+    exe.addIncludePath(b.path("agt2agx")); // resolves -include wasi_compat.h
+    exe.linkLibC();
 
     return exe;
 }
