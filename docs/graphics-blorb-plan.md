@@ -423,6 +423,46 @@ route the rest to collapsed panels (swipe to reveal). Report a mobile-width
 display via `arrange`. The tree tells you relative placement so panels land on
 the correct side.
 
+### Background research & design rationale (why this shape)
+
+**How Glk lets you signal limited window support (cheapglk study).** There is
+**no gestalt** for window count or window types. The *only* in-band signal is
+`glk_window_open` returning **NULL** — and the Glk spec *requires* programs to
+cope with NULL (degrade to fewer windows). cheapglk (`../cheapglk/cgwindow.c`)
+leans entirely on this: it accepts exactly one `wintype_TextBuffer` and returns
+NULL for any second window or any non-buffer type, no warning. So "tell the
+interpreter we only support X" = *refuse the opens we can't honour*. wasiglk
+does NOT need to do this (it builds the full tree); the arrangement tree +
+reflow mapping is the better path than refusing windows, which silently drops
+content (quote boxes, maps, graphics panes).
+
+**Why a hint, not absolute pixels.** talebrary renders like a chat log: grid
+pinned top, input pinned bottom, everything scrolls for history, and it
+*enriches* game output (injects images, suggestion chips). Absolute-positioned
+windows are impossible there. So the tree is a **flow hint**: map a split to
+nested flex (`Left/Right`→`row`, `Above/Below`→`column`), split size →
+`flex-basis`/grow, and let it reflow — never `position: absolute`.
+
+**Why NOT precompute CSS/geometry server-side.** Tempting for DRY, but it
+repeats RemGlk's original "layout computed where the rendering knowledge isn't"
+smell: the server can't see the medium (CSS vs SVG vs canvas), the enrichment,
+or the viewport; emitting CSS actively excludes non-CSS renderers. Killer
+detail: Glk fixed sizes are in **character cells**, and cell→pixel needs the
+client's font metrics (which is *why* metrics flow client→server in the first
+place) — so the server literally can't compute correct pixels. Keep the
+protocol **semantic** (the tree); resolve geometry at the edge (the shared
+`resolve()` in the client lib). One computation, every medium.
+
+**Naming decisions (settled):**
+- `layout` — chosen over `arrangement` (Glk overloads that word for a single
+  pair's split params, and it's long) and over `tree` (generic, says nothing of
+  purpose). `layout` states intent and matches every render target's vocab.
+- `window` for a leaf's id — not `win`/`window_id`; matches the existing input
+  events which already use `window: number` for a window reference.
+- `direction: 'row' | 'column'` — spelled out, not `dir`/`col`; matches CSS.
+- `Leaf` / `Container` node types; `size?` folded onto the node (no `Child`
+  wrapper); `update.layout` *is* the root node (no `{ root }` wrapper).
+
 ## Phase 6 — Play-to-learn UI profiles
 
 Cache a per-game UI profile keyed by story hash (already computed for saves):
