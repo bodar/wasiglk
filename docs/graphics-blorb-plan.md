@@ -62,6 +62,46 @@ strip and already work.
 
 ---
 
+## Reference: pixels vs characters (the metrics model)
+
+The single rule that makes it all cohere: **the GlkOte/RemGlk wire is entirely
+in pixels.** `init` `metrics.width`/`height` are the display area in *pixels*,
+never characters. Characters never travel as sizes — what travels are
+**px-per-character conversion factors** so the library can convert on demand.
+
+Metrics the client sends (all px):
+- `width`, `height` — display area.
+- `gridcharwidth`, `gridcharheight` — px for ONE grid (monospace) character:
+  column advance and line height.
+- `buffercharwidth`, `buffercharheight` — same for the buffer font
+  (approximate; variable-width, use the "0"/average glyph).
+- `gridmarginx/y`, `buffermarginx/y`, `graphicsmarginx/y` — px padding inside a
+  window.
+- `inspacingx/y` — px gutter between adjacent windows.
+
+How the library reconciles the two units:
+- **Layout is always pixels.** The whole window tree is laid out in the px
+  display area.
+- **Text (grid/buffer) windows convert.** `glk_window_get_size` returns
+  `cols = floor((win_px_width - gridmarginx) / gridcharwidth)`,
+  `rows = floor((win_px_height - gridmarginy) / gridcharheight)`.
+  800px ÷ 10px/char = 80 columns — the width the game wraps to.
+- **Graphics windows stay pixels.** `get_size` returns px; images drawn at px.
+- **Fixed splits go the other way.** `glk_window_open(..., winmethod_Fixed,
+  size, ...)`: `size` is in the *key window's* natural unit — characters for a
+  text key window, pixels for graphics. Inform's "status height 1" = 1 char row;
+  the library converts to px for layout (`1 * gridcharheight + gridmarginy`).
+
+So pixels are the shared substrate; each window type declares its unit against
+it; char metrics + margins are the exchange rate. Images (px) and text (chars)
+never interoperate directly — one currency, two denominations.
+
+**Reflow/chat clients (talebrary)** have no real windowed px viewport, so they
+*fabricate consistent metrics*: pick the rendered cell size (e.g. 8×16px) and the
+column count to wrap at (e.g. 80), send `width = 80×8`, `gridcharwidth = 8`,
+`gridcharheight = 16`, `height =` rows×16. The only requirement is internal
+consistency so `width / gridcharwidth` = the intended columns.
+
 ## Phase 0 — Gestalt gated on display support ✅ DONE (this session)
 
 Prerequisite already applied so graphics can be advertised at all.
@@ -251,10 +291,122 @@ recorded against the current pixel-based behaviour, so correcting grid metrics
 will change status-window rendering in those baselines. Do this as a focused
 change with the regression suite re-recorded and reviewed, not as a drive-by.
 
-Demo note: until Phase 4 lands, the example renders the status window as the
-interpreter emits it (a too-wide/too-tall grid), so multi-line status windows
-and wide rules look wrong. The demo's status bar clips horizontally to contain
-them; faithful multi-line rendering waits on the server fix.
+### Server work (the actual bug)
+1. Extend `state.client_metrics` beyond width/height to carry
+   `gridcharwidth/height`, `buffercharwidth/height`, and the margins; parse them
+   from the init `metrics` in `protocol.zig` (the client already sends them).
+2. `glk_window_get_size` (`window.zig`): grid → cols/rows via the char metrics +
+   margins; buffer → same with buffer metrics; graphics → px (unchanged).
+3. `queueWindowUpdate` (`protocol.zig`): send `gridwidth`/`gridheight` computed
+   the same way (drop the `char = 1`).
+4. `layoutWindow` (`window.zig`): a Fixed split on a text key window is in
+   **characters** → convert to px with that window's char metric before laying
+   out. Graphics key windows stay px.
+5. Make `get_size`, the protocol update, and the grid buffer wrap width all
+   agree. Add zig unit tests for the conversions.
+6. Re-record the `.regtest` baselines; review the diff (status-window rendering
+   changes) before committing.
+
+### Demo showcase (deliberately simple)
+Keep the example a *plain* reference, NOT the fancy scroll-behind treatment
+(that lives on talebrary). Measure the container the game renders into, send
+real px metrics, and render the common 1-grid + 1-buffer + input case with a
+standard inner scroll (buffer scrolls itself; grid pinned top; input pinned
+bottom). Goal: the simplest correct end-to-end example.
+
+### Reusable client helper (ship in the library, not the example)
+While building the demo, factor genuinely reusable pieces into
+`@bodar/wasiglk` so talebrary and other UIs share one implementation:
+- **`measureMetrics(container, opts)`** — measure a DOM element into a GlkOte
+  `Metrics` object: container px via `getBoundingClientRect`, grid char px via
+  canvas `measureText` on a monospace sample, line height, margins. This is
+  exactly what every client (incl. talebrary) needs and must not be
+  reimplemented per app.
+- Consider a small helper to re-emit an `arrange` event with fresh metrics on
+  resize (feeds Phase 5).
+Keep rendering (DOM/canvas) app-specific; only the measurement/metrics maths is
+shared.
+
+## Phase 5 — Responsive multi-window layout (arrangement hint)
+
+Goal: use desktop real estate for multi-window games (status/map panes left &
+right of the main text) and collapse those panes into swipe-out panels on
+mobile — instead of today's stacking.
+
+### Relationship to Phase 4
+Phase 4 makes window **sizes** correct (px↔char). It does NOT replace the
+arrangement work: correct per-window rects (`left/top/width/height`) become a
+*usable but weak* signal (a reflow client would have to reverse-engineer
+adjacency from pixels). The explicit arrangement **tree** below is a *strong*
+hint — it carries the split semantics (axis, order, which child is sized, how)
+without pixel archaeology. So Phase 4 = sizes; Phase 5 = structure. Keep both.
+
+### The mechanism
+`arrange` events. Init metrics → the game builds its window tree. On
+resize/orientation change the client sends an **`arrange` event with new
+metrics** → the game re-lays-out and re-emits its tree. So:
+- Desktop: send a wider display → multi-window games place panes L/R.
+- Mobile: send narrower via `arrange` → game reflows; demote non-primary
+  windows to collapsed swipe-out panels.
+Caveats: games also open/close windows mid-play (tree is live, not just at
+startup); the primary-vs-panel mapping must stay stable across arranges or the
+UI jumps.
+
+### The arrangement tree (design converged earlier — RECORD, not yet built)
+The essence of a Glk window layout is an **n-ary space partition**: rows and
+columns of content surfaces, each child optionally sized. Glk stores it as a
+strict *binary* pair tree and overloads internal nodes as addressable "pair
+windows"; for a rendering protocol that is noise. Emit the collapsed n-ary
+essence instead.
+
+Wire shape — one optional `layout` key on the update (leaves `windows[]` rects
+untouched for absolute clients; reflow clients read the tree):
+```ts
+type Size = { fixed: number } | { prop: number };   // cells or %
+interface Leaf      { window: number; size?: Size }  // window id from windows[]
+interface Container { direction: 'row' | 'column'; children: Node[]; size?: Size }
+type Node = Leaf | Container;
+// update.layout?: Node   (arrangement IS the root node; no wrapper)
+```
+Notes on the design decisions:
+- `window` is the leaf's id → a pointer into `windows[]` (which carries type,
+  rects, content). The arrangement tree holds zero duplicated content.
+- n-ary (not Glk's binary) + per-child `size` dissolves Glk's "key window"
+  concept: the sized children are fixed/proportional, an unsized child takes the
+  remainder — exactly flex-basis/flex-grow and i3's `percent`.
+- No "pair" nodes, no pair ids: the client never learns Glk's internal
+  conflation of layout-node and window.
+- Additive + optional; stock GlkOte/asyncglk ignore an unknown `layout` key;
+  reflow clients that lack it fall back to inferring from rects.
+
+Two functions realise it:
+- **Fold (server, Zig):** walk the `WindowData` binary pair tree → collapse
+  same-direction chains into n-ary `Container`s → emit `layout`. All inputs
+  already in `WindowData` (`parent`, `split_method`, `split_size`,
+  `child1/2`, `split_key`). One recursive fold; pure structure, no metrics.
+- **Resolve (shared client lib):** `layout` tree + real metrics → concrete
+  regions each renderer (chat-flow / SVG / canvas) consumes. This is the "one
+  computation, every medium" DRY win — belongs in `@bodar/wasiglk`, not per app.
+
+Prior art: this is exactly the emglken/RemGlk-rs + asyncglk split (blorb/image
+model), and i3/sway serialise their layout as a JSON split-container tree over
+IPC — logical tree is the source of truth, pixels are derived. Worth pitching
+the `layout` field upstream to asyncglk (reflow displays are a real gap there).
+
+### On mobile mapping
+Read the arrangement tree, pick the largest buffer as the main scroll view,
+route the rest to collapsed panels (swipe to reveal). Report a mobile-width
+display via `arrange`. The tree tells you relative placement so panels land on
+the correct side.
+
+## Phase 6 — Play-to-learn UI profiles
+
+Cache a per-game UI profile keyed by story hash (already computed for saves):
+discovered window arrangement, command/verb set, and layout shape, learned by
+actually playing the game. Second load maps to mobile/desktop well without
+discovery lag; benefits every user after one play. **Hint, not gospel** — the
+live runtime tree always wins if a game does something unexpected (dynamic
+windows). Larger product line; depends on Phase 5's arrangement tree existing.
 
 ## Cross-cutting notes
 
