@@ -95,7 +95,7 @@ export type { StoryFormat, FormatInfo } from './format';
 
 // Metrics measurement (browser-only helper)
 export { measureMetrics } from './metrics';
-export type { MeasureOptions } from './metrics';
+export type { MeasureTargets } from './metrics';
 
 // AGT → AGX conversion (server-side; pack multi-file AGT into a single AGX)
 export { agtToAgx } from './agt';

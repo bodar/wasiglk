@@ -285,7 +285,7 @@ async function startStory(story: Story): Promise<void> {
       storyUrl: `/${story.file}`,
       ...(story.format ? { format: story.format } : {}),
       workerUrl: '/worker.js',
-      metrics: measureMetrics(outputEl),
+      metrics: measureMetrics({ area: outputEl }),
     });
 
     // A newer selection may have superseded us during the async load.
