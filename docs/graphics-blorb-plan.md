@@ -216,25 +216,35 @@ Scare `.taf` with images; confirm image draw ops emit.
 
 ---
 
-## Phase 3 — Handle alan3 / jacl companion resource Blorbs (SPIKE)
+## Phase 3 — Companion / multi-file resource delivery (SPIKE)
 
-Scoped investigation, not a committed design yet.
+Scoped investigation, not a committed design yet. This is the **shared
+multi-file mechanism** for every interpreter that reads a *separate* file
+alongside the story, not just alan3/jacl.
 
-**The gap:** alan3 and jacl are Blorb-aware but load a **separate companion
-resource file**, not the story stream:
-- alan3 (`garglk/terps/alan3/glkstart.c:77-113`) derives a `.a3r` filename from
-  the story path and calls `giblorb_set_resource_map` on it.
-- jacl (`garglk/terps/jacl/jacl.c:237-258`) opens a companion `.blb` and calls
-  `giblorb_set_resource_map`.
+**Consumers (design the mechanism once for all of them):**
+- **alan3** — derives a `.a3r` resource file from the story path and calls
+  `giblorb_set_resource_map` on it (`garglk/terps/alan3/glkstart.c:77-113`).
+- **jacl** — opens a companion `.blb` and calls `giblorb_set_resource_map`
+  (`garglk/terps/jacl/jacl.c:237-258`).
+- **Hugo** — Hugo's graphics/media resources may live in a **separate resource
+  file (`.hlb`)** rather than embedded in the `.hex`. If a target game uses one,
+  Phase 2's Hugo graphics won't load until this multi-file delivery exists — so
+  Phase 2 and Phase 3 are linked. Confirm during the spike whether the target
+  Hugo games embed resources or ship a companion `.hlb`.
+- **Others to check:** TADS multi-file resources, and any self-rendering terp
+  (Scott/Magnetic/Level9) that reads a companion graphics file rather than
+  decoding from the story image itself.
 
-The worker currently writes only one file (`/sys/story.ulx`,
-`worker/worker.ts:275-277`), so the companion file the interpreter tries to open
-does not exist in the wasi filesystem → resources never load. Phase 1 does not
-fix this (different mechanism).
+**The gap:** the worker writes only one file (`/sys/story.ulx`,
+`worker/worker.ts:275-277`), so any companion file the interpreter tries to open
+is absent from the wasi filesystem → resources never load. Phase 1 (whole-Blorb)
+does not fix this — it's a different mechanism (one Blorb stream vs. multiple
+sibling files).
 
-**Requirement:** multi-file story delivery — the client must supply companion
-resource file(s), and the worker must write them into `/sys` under the names the
-interpreter expects.
+**Requirement:** multi-file story delivery — the client supplies the story plus
+any companion resource file(s), and the worker writes them all into `/sys` under
+the names each interpreter expects.
 
 **Open questions to resolve in the spike:**
 1. **Naming:** interpreters derive the companion name from the story filename
@@ -247,8 +257,9 @@ interpreter expects.
    byte-array to a set of named files? A small virtual-FS manifest?
 4. **Detection:** how does format detection know a companion is expected and
    fetch it?
-5. Whether any of the self-rendering terps or Hugo `.hlb` (Phase 2) share the
-   same multi-file need — design the mechanism once for all of them.
+5. **Per-consumer filenames:** confirm the exact companion name each
+   interpreter computes (alan3 `.a3r`, jacl `.blb`, Hugo `.hlb`, …) so the
+   worker writes each under the name that terp will open.
 
 **Deliverable of the spike:** a short design note recommending the multi-file
 delivery mechanism, then a follow-up implementation phase.
