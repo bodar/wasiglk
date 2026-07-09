@@ -104,6 +104,8 @@ export { agtToAgx } from './agt';
 export type { GraphicsRenderer } from './renderers/types';
 export { colorToCSS } from './renderers/types';
 export { SvgRenderer } from './renderers/svg';
+export { applyDrawOperations } from './renderers/apply';
+export type { ApplyDrawOptions } from './renderers/apply';
 
 // Worker message types (for advanced use cases)
 export type {
