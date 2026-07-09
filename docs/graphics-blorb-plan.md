@@ -124,7 +124,11 @@ available — but gating on `client_support` is the semantically correct one
 
 ---
 
-## Phase 1 — Stop extracting the story
+## Phase 1 — Stop extracting the story ✅ DONE
+
+Shipped in 84df34e (whole Blorb handed to the interpreter; images draw). The
+plus demo story picker + graphics/buffer-image rendering landed in 3fbc0d1 /
+36097aa. Detail below for reference.
 
 Align with emglken: hand every interpreter the whole, unmodified container.
 
@@ -251,7 +255,16 @@ delivery mechanism, then a follow-up implementation phase.
 
 ---
 
-## Phase 4 — Grid window metrics (character cells vs pixels)
+## Phase 4 — Grid window metrics (character cells vs pixels) ✅ DONE
+
+Shipped in 51b824b (server: size text windows in cells; `client_metrics` gains
+grid/buffer char w/h + margins; `get_size`/`queueWindowUpdate`/`layoutWindow`
+convert px↔cells; fixed text splits = chars×metric; grid buffer wrap tracks the
+computed size) and 5b61ace (`measureMetrics(container)` shipped in
+`@bodar/wasiglk`; demo sends measured metrics + renders multi-line status). All
+7 regtests passed unchanged — **no re-baseline was needed** after all. Follow-up:
+talebrary should adopt `measureMetrics` and send real pixel metrics. Original
+analysis below for reference.
 
 Discovered while wiring the demo's status-window rendering. Grid (and buffer)
 window dimensions are handled in **pixels where they should be character
