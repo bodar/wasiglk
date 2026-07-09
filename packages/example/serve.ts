@@ -8,16 +8,14 @@ const PORT = 3000;
 const EXAMPLE_DIR = dirname(new URL(import.meta.url).pathname);
 const ROOT_DIR = join(EXAMPLE_DIR, '../..');
 
-// File locations
+// File locations. Interpreter wasms are served from OPT_DIR and story files
+// from TESTS_DIR by basename, so the story-picker can load any built
+// interpreter / any test story without enumerating each one here.
 const TESTS_DIR = join(ROOT_DIR, 'packages/server/tests');
+const OPT_DIR = join(ROOT_DIR, 'packages/server/zig-out/opt');
 const paths: Record<string, string> = {
   '/': join(EXAMPLE_DIR, 'public/index.html'),
   '/index.html': join(EXAMPLE_DIR, 'public/index.html'),
-  '/advent.ulx': join(TESTS_DIR, 'advent.ulx'),
-  '/graphwintest.gblorb': join(TESTS_DIR, 'graphwintest.gblorb'),
-  '/imagetest.gblorb': join(TESTS_DIR, 'imagetest.gblorb'),
-  '/glulxercise.ulx': join(TESTS_DIR, 'glulxercise.ulx'),
-  '/glulxe.wasm': join(ROOT_DIR, 'packages/server/zig-out/opt/glulxe.wasm'),
 };
 
 // MIME types
@@ -87,6 +85,19 @@ void Bun.serve({
       } catch (e) {
         console.error('Worker build error:', e);
         return new Response(`Worker build error: ${e}`, { status: 500 });
+      }
+    }
+
+    // Interpreter wasms: /<name>.wasm -> zig-out/opt/<name>.wasm
+    // Story files: /<name.ext> -> packages/server/tests/<name.ext>
+    // basename-only guards against path traversal.
+    const base = path.slice(1);
+    if (base && !base.includes('/')) {
+      const dir = path.endsWith('.wasm') ? OPT_DIR : TESTS_DIR;
+      const file = Bun.file(join(dir, base));
+      if (await file.exists()) {
+        headers.set('Content-Type', getMimeType(path));
+        return new Response(file, { headers });
       }
     }
 
