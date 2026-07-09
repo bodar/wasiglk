@@ -116,9 +116,23 @@ function spanText(span: ContentSpan): string {
   return '';
 }
 
-// Output handling
-function appendOutput(text: string): void {
-  outputEl.textContent += text;
+// Append an inline image (Glk image drawn into a buffer window) to the output.
+function appendBufferImage(span: Extract<ContentSpan, { special: 'image' }>): void {
+  const url = client?.getImageUrl(span.image) ?? span.url;
+  if (!url) return;
+  const img = document.createElement('img');
+  img.src = url;
+  if (span.width) img.width = span.width;
+  if (span.height) img.height = span.height;
+  img.alt = span.alttext ?? '';
+  switch (span.alignment) {
+    case 'inlineup': img.style.verticalAlign = 'text-top'; break;
+    case 'inlinedown': img.style.verticalAlign = 'text-bottom'; break;
+    case 'inlinecenter': img.style.verticalAlign = 'middle'; break;
+    case 'marginleft': img.style.cssFloat = 'left'; break;
+    case 'marginright': img.style.cssFloat = 'right'; break;
+  }
+  outputEl.appendChild(img);
   outputEl.scrollTop = outputEl.scrollHeight;
 }
 
@@ -183,15 +197,20 @@ function handleUpdate(update: RemGlkUpdate): void {
           gameStatusBar.classList.add('visible');
         }
       } else {
-        // Buffer window - append text from paragraphs
+        // Buffer window - append text and inline images from paragraphs.
         if (content.clear) {
-          outputEl.textContent = '';
+          outputEl.replaceChildren();
         }
         for (const para of content.text ?? []) {
           for (const span of para.content ?? []) {
-            appendOutput(spanText(span));
+            if (typeof span === 'object' && 'special' in span && span.special === 'image') {
+              appendBufferImage(span);
+            } else {
+              outputEl.appendChild(document.createTextNode(spanText(span)));
+            }
           }
         }
+        outputEl.scrollTop = outputEl.scrollHeight;
       }
     }
   }

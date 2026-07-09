@@ -38,7 +38,7 @@ export fn glk_gestalt_ext(sel: glui32, val: glui32, arr: ?[*]glui32, arrlen: glu
         // deliver these events if the client can generate them, so gate on the
         // init `support` array rather than claiming support unconditionally.
         gestalt.Timer => return if (state.client_support.timer) @as(glui32, 1) else @as(glui32, 0),
-        gestalt.Graphics, gestalt.DrawImage, gestalt.GraphicsTransparency => {
+        gestalt.Graphics, gestalt.DrawImage, gestalt.DrawImageScale, gestalt.GraphicsTransparency => {
             // Graphics capability is a property of the display, reported via the
             // init `support` array. In this architecture the client parses the
             // Blorb and holds the images, feeding only the bare story to the wasm
@@ -142,6 +142,14 @@ test "gestalt Graphics reflects display support" {
     try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.Graphics, 0));
     state.client_support.graphics = true;
     try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.Graphics, 0));
+}
+
+test "gestalt DrawImageScale reflects display support" {
+    // We implement glk_image_draw_scaled, so scaling support tracks graphics.
+    state.client_support.graphics = false;
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.DrawImageScale, types.wintype.TextBuffer));
+    state.client_support.graphics = true;
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.DrawImageScale, types.wintype.TextBuffer));
 }
 
 test "gestalt Sound returns 0" {

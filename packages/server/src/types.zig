@@ -74,6 +74,7 @@ pub const gestalt = struct {
     pub const Sound2: glui32 = 21;
     pub const ResourceStream: glui32 = 22;
     pub const GraphicsCharInput: glui32 = 23;
+    pub const DrawImageScale: glui32 = 24;
 };
 
 pub const evtype = struct {

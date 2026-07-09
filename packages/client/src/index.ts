@@ -77,7 +77,6 @@ export type {
   ContentSpan,
   TextSpan,
   SpecialSpan,
-  SpecialContent,
   InputRequest,
   SpecialInput,
   ImageAlignment,

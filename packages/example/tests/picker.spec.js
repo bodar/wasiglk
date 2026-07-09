@@ -39,6 +39,27 @@ test.describe('Story picker', () => {
       .toBe(true);
   });
 
+  test('switching to a buffer-image story renders inline images', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#status')).toContainText('initialized', { timeout: 15000 });
+
+    await page.selectOption('#story', 'imagetest.gblorb');
+    await expect(page.locator('#status')).toContainText('initialized', { timeout: 20000 });
+    // The interpreter must actually support images (no scale-flags refusal).
+    await expect(page.locator('#output')).not.toContainText('does not support');
+
+    await page.locator('#input').fill('image');
+    await page.locator('#send').click();
+
+    // Inline images appear as <img> inside the buffer output and load.
+    await expect
+      .poll(async () => page.evaluate(() => {
+        const imgs = document.querySelectorAll('#output img');
+        return Array.from(imgs).filter((i) => i.complete && i.naturalWidth > 0).length;
+      }), { timeout: 8000 })
+      .toBeGreaterThan(0);
+  });
+
   test('switching to a Z-code story loads the fizmo interpreter', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#status')).toContainText('initialized', { timeout: 15000 });

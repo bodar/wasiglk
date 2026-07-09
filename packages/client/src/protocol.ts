@@ -164,23 +164,20 @@ export interface TextSpan {
   hyperlink?: number;
 }
 
+/**
+ * A special (non-text) span inside buffer window content. Per the GlkOte spec
+ * the discriminator `special` is a string and the payload fields are siblings
+ * (not nested). Currently only inline images occur here.
+ */
 export interface SpecialSpan {
-  special: SpecialContent;
-}
-
-export interface SpecialContent {
-  type: 'image' | 'flowbreak' | 'setcolor' | 'fill';
-  // Image fields
-  image?: number;
+  special: 'image';
+  image: number;
   url?: string;
   alignment?: ImageAlignment;
   width?: number;
   height?: number;
   alttext?: string;
-  // Graphics window fields
-  color?: number;
-  x?: number;
-  y?: number;
+  hyperlink?: number;
 }
 
 /** Image alignment in buffer windows. */
