@@ -4,7 +4,7 @@
  * Demonstrates using @bodar/wasiglk to run an interactive fiction interpreter.
  */
 
-import { createClient, type RemGlkUpdate, type ContentSpan, type DrawOperation, type StoryFormat } from '@bodar/wasiglk';
+import { createClient, measureMetrics, type RemGlkUpdate, type ContentSpan, type DrawOperation, type StoryFormat } from '@bodar/wasiglk';
 
 // The test stories we ship, one or more per interpreter type. `format` is only
 // set where extension-based detection would be wrong (baton.dat is a Scott
@@ -47,6 +47,11 @@ const windows = new Map<number, { type: 'buffer' | 'grid' | 'graphics' | 'pair' 
 // Canvas per graphics window, and the current default fill colour per window.
 const graphicsCanvases = new Map<number, HTMLCanvasElement>();
 const graphicsColor = new Map<number, string>();
+
+// Text of each grid (status) window's lines, indexed by window id then line
+// number, so a multi-line status window renders as separate lines rather than
+// one concatenated string.
+const gridLineText = new Map<number, string[]>();
 
 // Lazily create (or fetch) the canvas for a graphics window, sized to the
 // window's pixel dimensions and inserted above the text output.
@@ -185,17 +190,24 @@ function handleUpdate(update: RemGlkUpdate): void {
           drawGraphics(content.id, content.draw);
         }
       } else if (win?.type === 'grid') {
-        // Grid window (status bar) - extract text from lines
-        let text = '';
+        // Grid window (status bar): updates carry only the changed lines, each
+        // with its line number. Accumulate per line, render the window with a
+        // newline between lines (grid sizing is now correct, so lines don't
+        // spuriously wrap).
+        let lines = gridLineText.get(content.id);
+        if (!lines || content.clear) {
+          lines = [];
+          gridLineText.set(content.id, lines);
+        }
         for (const line of content.lines ?? []) {
+          let text = '';
           for (const span of line.content ?? []) {
             text += spanText(span);
           }
+          lines[line.line] = text;
         }
-        if (text) {
-          gameStatusBar.textContent = text;
-          gameStatusBar.classList.add('visible');
-        }
+        gameStatusBar.textContent = lines.map((l) => l ?? '').join('\n');
+        gameStatusBar.classList.add('visible');
       } else {
         // Buffer window - append text and inline images from paragraphs.
         if (content.clear) {
@@ -245,6 +257,7 @@ function resetForNewStory(): void {
   for (const canvas of graphicsCanvases.values()) canvas.remove();
   graphicsCanvases.clear();
   graphicsColor.clear();
+  gridLineText.clear();
   initialized = false;
   outputEl.textContent = '';
   gameStatusBar.textContent = '';
@@ -266,17 +279,13 @@ async function startStory(story: Story): Promise<void> {
   setStatus(`Loading ${story.file}...`, 'info');
 
   try {
-    const outputRect = outputEl.getBoundingClientRect();
+    // Measure the real pixel size of the output area and its font, so the
+    // interpreter converts to character cells correctly.
     client = await createClient({
       storyUrl: `/${story.file}`,
       ...(story.format ? { format: story.format } : {}),
       workerUrl: '/worker.js',
-      metrics: {
-        width: Math.floor(outputRect.width) || 800,
-        height: Math.floor(outputRect.height) || 600,
-        charwidth: 10,
-        charheight: 18,
-      },
+      metrics: measureMetrics(outputEl),
     });
 
     // A newer selection may have superseded us during the async load.

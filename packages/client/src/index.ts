@@ -93,6 +93,10 @@ export type { BlorbImage, BlorbResource } from './blorb';
 export { detectFormat, detectFormatFromUrl, detectFormatFromData } from './format';
 export type { StoryFormat, FormatInfo } from './format';
 
+// Metrics measurement (browser-only helper)
+export { measureMetrics } from './metrics';
+export type { MeasureOptions } from './metrics';
+
 // AGT → AGX conversion (server-side; pack multi-file AGT into a single AGX)
 export { agtToAgx } from './agt';
 
