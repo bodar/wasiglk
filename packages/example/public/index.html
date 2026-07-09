@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WasiGlk Example - Colossal Cave Adventure</title>
+    <title>WasiGlk Demo</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -40,6 +40,8 @@
             font-size: 14px;
             color: #00d4ff;
             white-space: pre;
+            overflow-x: auto;
+            font-family: monospace;
             display: none;
         }
         #game-status-bar.visible { display: block; }
@@ -107,7 +109,7 @@
 </head>
 <body>
     <div id="game-container">
-        <h1>Colossal Cave Adventure</h1>
+        <h1>WasiGlk Demo</h1>
         <div id="status" class="status info">Checking JSPI support...</div>
         <div id="game-status-bar"></div>
         <div id="output"></div>

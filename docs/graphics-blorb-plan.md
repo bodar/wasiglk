@@ -211,6 +211,51 @@ delivery mechanism, then a follow-up implementation phase.
 
 ---
 
+## Phase 4 — Grid window metrics (character cells vs pixels)
+
+Discovered while wiring the demo's status-window rendering. Grid (and buffer)
+window dimensions are handled in **pixels where they should be character
+cells**, and the two internal representations disagree.
+
+Evidence (advent status window, demo):
+```
+GRIDWIN id=2 gw=800 gh=1            <- get_size / update REPORT 800 columns
+GRIDLINE line=0 len=80 "...At End Of Road   M"   <- content WRAPS at 80
+GRIDLINE line=1 len=8  "oves: 16"                <- overflow onto row 1
+```
+
+Three coupled defects:
+1. `glk_window_get_size` (`window.zig:242`) returns `layout_width / char_width`
+   with `char_width = char_height = 1` (a TODO) → reports pixels as columns
+   (800 instead of ~80).
+2. `queueWindowUpdate` (`protocol.zig:466`) has the same `char = 1` TODO for the
+   `gridwidth`/`gridheight` it sends over the protocol.
+3. `layoutWindow` treats a **Fixed** split size as pixels
+   (`window.zig:445`), but for text windows a fixed split is in **character
+   rows/columns** (e.g. Inform's `split status height 1` → a 1-row status
+   window becomes 1 *pixel* tall).
+Meanwhile the grid buffer itself wraps at `WindowData.grid_width` (default 80),
+so games are told 800 but their output wraps at 80 — the visible symptoms are
+status lines splitting mid-word and games (ScottFree) drawing full-width rules
+as walls of dashes.
+
+Fix direction: carry real character metrics (`gridcharwidth`/`gridcharheight`,
+`buffercharwidth`/`buffercharheight`, parsed from the init `metrics` — the
+client already sends them) in `state.client_metrics`; compute grid/buffer
+window sizes as `layout / <char metric>`; treat fixed text-window splits as
+character units in `layoutWindow`; and make `get_size`, the protocol update, and
+the grid buffer all agree.
+
+**Caveat — needs regtest re-baselining.** The `.regtest` expected outputs were
+recorded against the current pixel-based behaviour, so correcting grid metrics
+will change status-window rendering in those baselines. Do this as a focused
+change with the regression suite re-recorded and reviewed, not as a drive-by.
+
+Demo note: until Phase 4 lands, the example renders the status window as the
+interpreter emits it (a too-wide/too-tall grid), so multi-line status windows
+and wide rules look wrong. The demo's status bar clips horizontally to contain
+them; faithful multi-line rendering waits on the server fix.
+
 ## Cross-cutting notes
 
 - The **image draw protocol** (server emits image number + geometry; client
