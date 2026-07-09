@@ -136,9 +136,22 @@ pub var current_hyperlink: glui32 = 0;
 
 // Initialization flag and client metrics
 pub var glk_initialized: bool = false;
+// Display metrics from the init `metrics` message. width/height are PIXELS;
+// the *char* fields are pixels-per-character (grid = monospace advance/line
+// height, buffer = approximate), used to convert text-window pixel sizes to
+// character cells. Char dims default to 1.0 so a client that sends neither
+// pixels-plus-metrics nor char metrics still behaves as "1 unit = 1 cell".
 pub var client_metrics: struct {
     width: u32 = 80,
     height: u32 = 24,
+    grid_char_w: f64 = 1.0,
+    grid_char_h: f64 = 1.0,
+    grid_margin_x: f64 = 0.0,
+    grid_margin_y: f64 = 0.0,
+    buffer_char_w: f64 = 1.0,
+    buffer_char_h: f64 = 1.0,
+    buffer_margin_x: f64 = 0.0,
+    buffer_margin_y: f64 = 0.0,
 } = .{};
 
 // Client capabilities (populated from init message's support array)

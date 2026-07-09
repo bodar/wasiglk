@@ -232,17 +232,52 @@ fn closeSubtree(w: *WindowData) void {
     freeWindow(w);
 }
 
+/// Convert a pixel extent to character cells: (px - margin) / char_px, floored,
+/// clamped to >= 0. Used to report text-window sizes to the game.
+pub fn pxToCells(px: f64, margin: f64, char_px: f64) glui32 {
+    if (char_px <= 0) return 0;
+    const usable = px - margin;
+    if (usable <= 0) return 0;
+    return @intFromFloat(usable / char_px);
+}
+
+/// Character-cell width of a text window from its laid-out pixel width.
+fn textCols(win: *WindowData) glui32 {
+    const cm = state.client_metrics;
+    if (win.win_type == types.wintype.TextGrid)
+        return pxToCells(win.layout_width, cm.grid_margin_x, cm.grid_char_w);
+    return pxToCells(win.layout_width, cm.buffer_margin_x, cm.buffer_char_w);
+}
+
+/// Character-cell height of a text window from its laid-out pixel height.
+fn textRows(win: *WindowData) glui32 {
+    const cm = state.client_metrics;
+    if (win.win_type == types.wintype.TextGrid)
+        return pxToCells(win.layout_height, cm.grid_margin_y, cm.grid_char_h);
+    return pxToCells(win.layout_height, cm.buffer_margin_y, cm.buffer_char_h);
+}
+
+/// Pixel size of a Fixed split, converting the key window's char-cell size to
+/// pixels. `horizontal` true → the split divides width (columns); false →
+/// height (rows). Graphics/other key windows keep pixel units.
+fn fixedSplitPx(key: ?*WindowData, horizontal: bool, size: glui32) f64 {
+    const s: f64 = @floatFromInt(size);
+    const k = key orelse return s;
+    const cm = state.client_metrics;
+    return switch (k.win_type) {
+        types.wintype.TextGrid => if (horizontal) s * cm.grid_char_w + cm.grid_margin_x else s * cm.grid_char_h + cm.grid_margin_y,
+        types.wintype.TextBuffer => if (horizontal) s * cm.buffer_char_w + cm.buffer_margin_x else s * cm.buffer_char_h + cm.buffer_margin_y,
+        else => s, // graphics / pair: already pixels
+    };
+}
+
 export fn glk_window_get_size(win_opaque: winid_t, widthptr: ?*glui32, heightptr: ?*glui32) callconv(.c) void {
     const win: ?*WindowData = @ptrCast(@alignCast(win_opaque));
     if (win) |w| {
-        // For grid/buffer windows, return size in character cells
-        // For graphics windows, return size in pixels
+        // Grid/buffer windows report character cells; graphics report pixels.
         if (w.win_type == types.wintype.TextGrid or w.win_type == types.wintype.TextBuffer) {
-            // TODO: Use actual character metrics
-            const char_width: u32 = 1;
-            const char_height: u32 = 1;
-            if (widthptr) |wp| wp.* = if (w.layout_width > 0) @intFromFloat(w.layout_width / @as(f64, @floatFromInt(char_width))) else 80;
-            if (heightptr) |hp| hp.* = if (w.layout_height > 0) @intFromFloat(w.layout_height / @as(f64, @floatFromInt(char_height))) else 24;
+            if (widthptr) |wp| wp.* = if (w.layout_width > 0) textCols(w) else 80;
+            if (heightptr) |hp| hp.* = if (w.layout_height > 0) textRows(w) else 24;
         } else {
             // Graphics/other windows: return pixel dimensions
             if (widthptr) |wp| wp.* = if (w.layout_width > 0) @intFromFloat(w.layout_width) else 80;
@@ -431,6 +466,16 @@ fn layoutWindow(win: *WindowData, left: f64, top: f64, width: f64, height: f64) 
     win.layout_width = width;
     win.layout_height = height;
 
+    // Keep a grid window's logical cell dimensions (its buffer wrap width and
+    // cursor bounds) in sync with what glk_window_get_size reports, clamped to
+    // the backing buffer. Otherwise writes wrap at the stale default width.
+    if (win.win_type == types.wintype.TextGrid) {
+        const cols = textCols(win);
+        const rows = textRows(win);
+        win.grid_width = @min(cols, @as(glui32, state.MAX_GRID_WIDTH));
+        win.grid_height = @min(rows, @as(glui32, state.MAX_GRID_HEIGHT));
+    }
+
     // If this is a pair window, split the space between children
     if (win.win_type == types.wintype.Pair) {
         const child1 = win.child1 orelse return;
@@ -443,9 +488,11 @@ fn layoutWindow(win: *WindowData, left: f64, top: f64, width: f64, height: f64) 
         // Determine the split size in pixels
         var key_size: f64 = 0;
         if (division == types.winmethod.Fixed) {
-            // Fixed: size is in pixels (or character cells for text windows)
-            // For now, treat as pixels - can be refined with metrics
-            key_size = @floatFromInt(size);
+            // Fixed: the size is in the KEY window's natural unit — character
+            // rows/columns for a text key window, pixels for graphics. Convert
+            // to pixels for layout using that window's char metrics.
+            const horizontal = (dir == types.winmethod.Left or dir == types.winmethod.Right);
+            key_size = fixedSplitPx(win.split_key, horizontal, size);
         } else {
             // Proportional: size is a percentage (0-100)
             const total = if (dir == types.winmethod.Left or dir == types.winmethod.Right) width else height;
@@ -495,4 +542,26 @@ fn queueAllWindowUpdates() void {
             protocol.queueWindowUpdate(w);
         }
     }
+}
+
+const testing = std.testing;
+
+test "pxToCells converts pixels to character cells with margin" {
+    try testing.expectEqual(@as(glui32, 80), pxToCells(800, 0, 10));
+    try testing.expectEqual(@as(glui32, 79), pxToCells(800, 10, 10)); // (800-10)/10
+    try testing.expectEqual(@as(glui32, 40), pxToCells(480, 0, 12));
+    try testing.expectEqual(@as(glui32, 0), pxToCells(5, 10, 10)); // usable <= 0
+    try testing.expectEqual(@as(glui32, 0), pxToCells(800, 0, 0)); // char_px <= 0
+}
+
+test "fixedSplitPx: text splits use char metrics, graphics stays pixels" {
+    state.client_metrics.grid_char_w = 10;
+    state.client_metrics.grid_char_h = 12;
+    state.client_metrics.grid_margin_x = 0;
+    state.client_metrics.grid_margin_y = 0;
+    var grid = WindowData{ .id = 1, .rock = 0, .win_type = types.wintype.TextGrid };
+    try testing.expectEqual(@as(f64, 12), fixedSplitPx(&grid, false, 1)); // 1 row -> 12px
+    try testing.expectEqual(@as(f64, 80), fixedSplitPx(&grid, true, 8)); // 8 cols -> 80px
+    var gfx = WindowData{ .id = 2, .rock = 0, .win_type = types.wintype.Graphics };
+    try testing.expectEqual(@as(f64, 100), fixedSplitPx(&gfx, false, 100)); // pixels
 }

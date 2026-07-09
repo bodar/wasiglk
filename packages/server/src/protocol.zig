@@ -450,6 +450,15 @@ pub fn sendError(message: []const u8) void {
     writeJson(ErrorResponse{ .message = message });
 }
 
+/// Pixels -> character cells: (px - margin) / char_px, floored, clamped to >= 0.
+/// Mirrors window.pxToCells (kept local to avoid a circular import).
+fn pxCells(px: f64, margin: f64, char_px: f64) u32 {
+    if (char_px <= 0) return 0;
+    const usable = px - margin;
+    if (usable <= 0) return 0;
+    return @intFromFloat(usable / char_px);
+}
+
 pub fn queueWindowUpdate(win: *WindowData) void {
     if (pending_windows_len >= pending_windows.len) return;
     const wtype: WindowType = switch (win.win_type) {
@@ -463,12 +472,11 @@ pub fn queueWindowUpdate(win: *WindowData) void {
     const width = win.layout_width;
     const height = win.layout_height;
 
-    // For grid windows, calculate character cell dimensions
-    // Using gridcharwidth/gridcharheight if available, fallback to 1 char = 1 pixel
-    const grid_char_w: u32 = 1; // TODO: use actual metrics
-    const grid_char_h: u32 = 1;
-    const grid_width: u32 = if (width > 0) @intFromFloat(width / @as(f64, @floatFromInt(grid_char_w))) else 80;
-    const grid_height: u32 = if (height > 0) @intFromFloat(height / @as(f64, @floatFromInt(grid_char_h))) else 24;
+    // For grid windows, convert the pixel layout to character cells using the
+    // client's grid char metrics (same conversion as glk_window_get_size).
+    const cm = state.client_metrics;
+    const grid_width: u32 = if (width > 0) pxCells(width, cm.grid_margin_x, cm.grid_char_w) else 80;
+    const grid_height: u32 = if (height > 0) pxCells(height, cm.grid_margin_y, cm.grid_char_h) else 24;
 
     pending_windows[pending_windows_len] = .{
         .id = win.id,
@@ -864,10 +872,19 @@ pub fn ensureGlkInitialized() void {
             return;
         }
 
-        // Store client metrics
+        // Store client metrics. Grid/buffer char dims fall back to the generic
+        // charwidth/charheight, then to the existing default (1.0).
         if (event.metrics) |m| {
             if (m.width) |w| state.client_metrics.width = w;
             if (m.height) |h| state.client_metrics.height = h;
+            if (m.gridcharwidth orelse m.charwidth) |v| state.client_metrics.grid_char_w = v;
+            if (m.gridcharheight orelse m.charheight) |v| state.client_metrics.grid_char_h = v;
+            if (m.buffercharwidth orelse m.charwidth) |v| state.client_metrics.buffer_char_w = v;
+            if (m.buffercharheight orelse m.charheight) |v| state.client_metrics.buffer_char_h = v;
+            if (m.gridmarginx) |v| state.client_metrics.grid_margin_x = v;
+            if (m.gridmarginy) |v| state.client_metrics.grid_margin_y = v;
+            if (m.buffermarginx) |v| state.client_metrics.buffer_margin_x = v;
+            if (m.buffermarginy) |v| state.client_metrics.buffer_margin_y = v;
         }
 
         // Parse client capabilities from support array
