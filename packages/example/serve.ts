@@ -9,10 +9,14 @@ const EXAMPLE_DIR = dirname(new URL(import.meta.url).pathname);
 const ROOT_DIR = join(EXAMPLE_DIR, '../..');
 
 // File locations
+const TESTS_DIR = join(ROOT_DIR, 'packages/server/tests');
 const paths: Record<string, string> = {
   '/': join(EXAMPLE_DIR, 'public/index.html'),
   '/index.html': join(EXAMPLE_DIR, 'public/index.html'),
-  '/advent.ulx': join(ROOT_DIR, 'tests/advent.ulx'),
+  '/advent.ulx': join(TESTS_DIR, 'advent.ulx'),
+  '/graphwintest.gblorb': join(TESTS_DIR, 'graphwintest.gblorb'),
+  '/imagetest.gblorb': join(TESTS_DIR, 'imagetest.gblorb'),
+  '/glulxercise.ulx': join(TESTS_DIR, 'glulxercise.ulx'),
   '/glulxe.wasm': join(ROOT_DIR, 'packages/server/zig-out/opt/glulxe.wasm'),
 };
 
@@ -23,6 +27,7 @@ const mimeTypes: Record<string, string> = {
   '.ts': 'application/javascript',
   '.wasm': 'application/wasm',
   '.ulx': 'application/octet-stream',
+  '.gblorb': 'application/octet-stream',
   '.css': 'text/css',
   '.json': 'application/json',
 };

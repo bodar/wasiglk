@@ -156,15 +156,19 @@ export class WasiGlkClient {
       ? { format: config.format, interpreter: getInterpreterName(config.format), isBlorb: false }
       : detectFormat(storyUrl, storyData);
 
-    // Parse Blorb
+    // Parse Blorb (if any) to pick the interpreter and to hold image resources
+    // for client-side rendering. We deliberately do NOT unwrap the executable
+    // chunk: the whole, unmodified story file is handed to the interpreter so it
+    // can self-detect the Blorb and call giblorb_set_resource_map itself. That
+    // populates the server-side blorb map, which is what glk_image_get_info /
+    // glk_image_draw read from. (This mirrors the emglken/remglk-rs contract;
+    // stripping to the bare .ulx/.z5 is why images previously never drew.)
     let blorb: BlorbParser | null = null;
-    let executableData = storyData;
 
     if (formatInfo.isBlorb || BlorbParser.isBlorb(storyData)) {
       blorb = new BlorbParser(storyData);
       const exec = blorb.getExecutable();
       if (exec) {
-        executableData = exec.data;
         if (exec.type === 'GLUL') {
           formatInfo.format = 'glulx';
           formatInfo.interpreter = 'glulxe';
@@ -199,7 +203,7 @@ export class WasiGlkClient {
     const transcriptLabel = config.transcriptLabel ?? storyUrl ?? storyId;
 
     return new WasiGlkClient({
-      storyData: executableData,
+      storyData,
       interpreterData,
       formatInfo,
       blorb,

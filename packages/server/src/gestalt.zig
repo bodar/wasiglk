@@ -4,6 +4,7 @@ const std = @import("std");
 const types = @import("types.zig");
 const blorb = @import("blorb.zig");
 const protocol = @import("protocol.zig");
+const state = @import("state.zig");
 
 const glui32 = types.glui32;
 const gestalt = types.gestalt;
@@ -33,14 +34,21 @@ export fn glk_gestalt_ext(sel: glui32, val: glui32, arr: ?[*]glui32, arrlen: glu
             return gestalt.CharOutput_CannotPrint;
         },
         gestalt.Unicode, gestalt.UnicodeNorm => return 1,
-        gestalt.Timer => return 1,
+        // Timer and hyperlinks are display capabilities: the interpreter can only
+        // deliver these events if the client can generate them, so gate on the
+        // init `support` array rather than claiming support unconditionally.
+        gestalt.Timer => return if (state.client_support.timer) @as(glui32, 1) else @as(glui32, 0),
         gestalt.Graphics, gestalt.DrawImage, gestalt.GraphicsTransparency => {
-            // Graphics supported if Blorb map with images is loaded
-            return if (blorb.blorb_map != null) @as(glui32, 1) else @as(glui32, 0);
+            // Graphics capability is a property of the display, reported via the
+            // init `support` array. In this architecture the client parses the
+            // Blorb and holds the images, feeding only the bare story to the wasm
+            // interpreter, so the server never has a blorb_map to key off. Gate on
+            // the display's advertised support instead.
+            return if (state.client_support.graphics) @as(glui32, 1) else @as(glui32, 0);
         },
         gestalt.GraphicsCharInput => return 0,
         gestalt.Sound, gestalt.SoundVolume, gestalt.SoundNotify, gestalt.SoundMusic, gestalt.Sound2 => return 0,
-        gestalt.Hyperlinks, gestalt.HyperlinkInput => return 1,
+        gestalt.Hyperlinks, gestalt.HyperlinkInput => return if (state.client_support.hyperlinks) @as(glui32, 1) else @as(glui32, 0),
         gestalt.MouseInput => {
             // Mouse input is supported for grid and graphics windows
             const wintype = types.wintype;
@@ -113,13 +121,27 @@ test "gestalt Unicode and DateTime return 1" {
     try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.DateTime, 0));
 }
 
-test "gestalt Hyperlinks returns 1" {
+test "gestalt Hyperlinks reflects display support" {
+    state.client_support.hyperlinks = false;
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.Hyperlinks, 0));
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.HyperlinkInput, 0));
+    state.client_support.hyperlinks = true;
     try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.Hyperlinks, 0));
     try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.HyperlinkInput, 0));
 }
 
-test "gestalt Timer returns 1" {
+test "gestalt Timer reflects display support" {
+    state.client_support.timer = false;
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.Timer, 0));
+    state.client_support.timer = true;
     try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.Timer, 0));
+}
+
+test "gestalt Graphics reflects display support" {
+    state.client_support.graphics = false;
+    try testing.expectEqual(@as(glui32, 0), glk_gestalt(gestalt.Graphics, 0));
+    state.client_support.graphics = true;
+    try testing.expectEqual(@as(glui32, 1), glk_gestalt(gestalt.Graphics, 0));
 }
 
 test "gestalt Sound returns 0" {
