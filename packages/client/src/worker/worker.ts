@@ -26,6 +26,7 @@ import {
 } from './storage';
 import { AsyncFSAFile } from './storage/async-fsa-file';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './messages';
+import { isZip, unzipEntries } from '../container';
 import type { InputEvent, RemGlkUpdate } from '../protocol';
 import { TranscriptRecorder } from './transcript';
 import { ReplayQueue } from './replay-queue';
@@ -269,12 +270,25 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
     const stderr = ConsoleStdout.lineBuffered(line => console.debug('[interpreter]', line));
 
     // Filesystem: Unix-like structure
-    // /sys/  - read-only system files (story)
+    // /sys/  - read-only system files (story + companion resources)
     // /var/  - auto-managed data (saves, transcripts) - from storage provider
     // /home/ - user files from dialogs
-    const sysDir = new Directory(new Map([
-      ['story.ulx', new File(msg.story, { readonly: true })],
-    ]));
+    //
+    // The story arrives as one blob. A single-file container (zip) is exploded
+    // into sibling files here, inside the sandbox, so the interpreter sees a
+    // normal game folder and its own companion-file logic (which derives names
+    // from the story filename, or opens a name baked into the story) resolves
+    // against /sys. A bare story is written under its own name. All /sys files
+    // are read-only.
+    const sysContents = new Map<string, Inode>();
+    if (isZip(msg.story)) {
+      for (const { name, data } of unzipEntries(msg.story)) {
+        sysContents.set(name, new File(data, { readonly: true }));
+      }
+    } else {
+      sysContents.set(msg.storyName, new File(msg.story, { readonly: true }));
+    }
+    const sysDir = new Directory(sysContents);
     const homeContents = new Map<string, Inode>();
     const homeDir = new Directory(homeContents);
 

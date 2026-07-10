@@ -90,8 +90,12 @@ export { BlorbParser } from './blorb';
 export type { BlorbImage, BlorbResource } from './blorb';
 
 // Format detection
-export { detectFormat, detectFormatFromUrl, detectFormatFromData } from './format';
+export { detectFormat, detectFormatFromUrl, detectFormatFromData, extensionForFormat } from './format';
 export type { StoryFormat, FormatInfo } from './format';
+
+// Single-file container (zip) unpacking
+export { isZip, unzipEntries, pickPrimary } from './container';
+export type { ContainerEntry, PrimarySelection } from './container';
 
 // Metrics measurement (browser-only helper)
 export { measureMetrics } from './metrics';

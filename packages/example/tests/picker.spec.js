@@ -7,8 +7,9 @@ test.describe('Story picker', () => {
 
     const select = page.locator('#story');
     await expect(select).toBeVisible();
-    // One entry per shipped test story, spanning glulx / z-code / hugo / scott.
-    await expect(select.locator('option')).toHaveCount(9);
+    // One entry per shipped test story, spanning glulx / z-code / hugo / scott
+    // plus a zipped-container case.
+    await expect(select.locator('option')).toHaveCount(10);
     await expect(select).toHaveValue('advent.ulx');
     await expect(page.locator('#output')).toContainText('Welcome to Adventure');
   });

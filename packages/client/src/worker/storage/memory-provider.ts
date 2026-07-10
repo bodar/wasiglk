@@ -39,8 +39,8 @@ export class MemoryProvider implements StorageProvider {
 
   shouldPersist(path: string): boolean {
     const filename = path.split('/').pop() ?? path;
-    // In memory mode, we still want to "track" files (just not persist them)
-    // but exclude read-only files
+    // Only /var paths reach here; read-only game files live in /sys (see
+    // READ_ONLY_FILES). Memory mode tracks files but never persists them.
     return !READ_ONLY_FILES.has(filename);
   }
 

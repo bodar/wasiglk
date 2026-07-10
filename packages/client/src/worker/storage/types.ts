@@ -6,8 +6,13 @@
 
 import type { Inode } from '@bjorn3/browser_wasi_shim';
 
-/** Files that should not be persisted (read-only game files) */
-export const READ_ONLY_FILES = new Set(['story.ulx']);
+/**
+ * Basenames under /var that must never be persisted. Read-only game files live
+ * in /sys (mounted read-only, exploded from the story container) and never
+ * reach the persistence layer, which is /var-scoped — so this is a defensive
+ * backstop, currently empty.
+ */
+export const READ_ONLY_FILES = new Set<string>([]);
 
 /** File system configuration mode */
 export type FilesystemMode = 'auto' | 'opfs' | 'memory' | 'dialog';

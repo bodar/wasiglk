@@ -216,53 +216,84 @@ Scare `.taf` with images; confirm image draw ops emit.
 
 ---
 
-## Phase 3 — Companion / multi-file resource delivery (SPIKE)
+## Phase 3 — Companion / multi-file resource delivery ✅ DONE
 
-Scoped investigation, not a committed design yet. This is the **shared
-multi-file mechanism** for every interpreter that reads a *separate* file
-alongside the story, not just alan3/jacl.
+Delivered as **single-file container delivery**: a story is always one blob —
+either the bare story, or a container (a zip) holding the story plus its
+companion resource files. The container is exploded into the in-memory WASI
+`/sys` directory *inside the worker sandbox*, so every interpreter sees a normal
+game folder and its own companion-file logic resolves against it. Nothing about
+the delivery interface is multi-file; the container carries the multiplicity.
 
-**Consumers (design the mechanism once for all of them):**
-- **alan3** — derives a `.a3r` resource file from the story path and calls
-  `giblorb_set_resource_map` on it (`garglk/terps/alan3/glkstart.c:77-113`).
-- **jacl** — opens a companion `.blb` and calls `giblorb_set_resource_map`
-  (`garglk/terps/jacl/jacl.c:237-258`).
-- **Hugo** — Hugo's graphics/media resources may live in a **separate resource
-  file (`.hlb`)** rather than embedded in the `.hex`. If a target game uses one,
-  Phase 2's Hugo graphics won't load until this multi-file delivery exists — so
-  Phase 2 and Phase 3 are linked. Confirm during the spike whether the target
-  Hugo games embed resources or ship a companion `.hlb`.
-- **Others to check:** TADS multi-file resources, and any self-rendering terp
-  (Scott/Magnetic/Level9) that reads a companion graphics file rather than
-  decoding from the story image itself.
+### The unifying principle (what made it simple)
 
-**The gap:** the worker writes only one file (`/sys/story.ulx`,
-`worker/worker.ts:275-277`), so any companion file the interpreter tries to open
-is absent from the wasi filesystem → resources never load. Phase 1 (whole-Blorb)
-does not fix this — it's a different mechanism (one Blorb stream vs. multiple
-sibling files).
+**The client faithfully mirrors the original game directory into `/sys` under
+the original filenames. Zero name derivation, zero bytecode parsing.** Every
+interpreter already computes its own companion path — by extension-swap
+(alan3 `.acd`→`.a3r`, jacl `<stem>.blorb`), by numbered-slot loop (TADS
+`.3r0`–`.3r9` / `.RS0`–`.RS9`), by a name baked into the compiled story (Hugo's
+`resourcefile "..."`), or by substring surgery on the original filename
+(plus `HULK1`→`HULK2`, taylor part-letter flip, magnetic/level9 `.gfx`/`.pic`).
+All of these operate on the *real* names they were written for. If those files
+sit in `/sys` under their real names, each terp's existing logic just works —
+so the client neither derives companion names nor parses story bytecode. The zip
+*is* the manifest.
 
-**Requirement:** multi-file story delivery — the client supplies the story plus
-any companion resource file(s), and the worker writes them all into `/sys` under
-the names each interpreter expects.
+This also dissolves the naming/detection open questions from the original spike:
+the primary story name is preserved verbatim (interpreters that key off it get
+the real name); companions are preserved verbatim; the primary entry is found by
+running the existing format detector over the container's entries.
 
-**Open questions to resolve in the spike:**
-1. **Naming:** interpreters derive the companion name from the story filename
-   (e.g. `story.a3r` next to `story.a3c`). The worker writes `story.ulx`
-   regardless of format — the companion name must match what the terp computes.
-   Do we write story files under format-correct names/extensions?
-2. **Source:** where does the client obtain the companion file? Separate
-   download alongside the story? Bundled? Part of a zip/container?
-3. **Delivery shape:** extend the worker `init` message from a single `story`
-   byte-array to a set of named files? A small virtual-FS manifest?
-4. **Detection:** how does format detection know a companion is expected and
-   fetch it?
-5. **Per-consumer filenames:** confirm the exact companion name each
-   interpreter computes (alan3 `.a3r`, jacl `.blb`, Hugo `.hlb`, …) so the
-   worker writes each under the name that terp will open.
+### Consumers (all covered by the one mechanism)
+- **alan3** (`.a3r`), **jacl** (`<stem>.blorb`) — Glk fileref → `giblorb_set_resource_map`.
+- **TADS** — `load_ext_resfiles` numbered-slot loop, own resource format.
+- **Hugo** — author-named `resourcefile` opened relative to the story dir.
+- **Self-rendering, raw `fopen`** — plus / taylor / magnetic / level9 read
+  sibling disk/graphics files directly (bypassing Glk); they resolve against the
+  WASI `/sys` dir like any real folder, and their not-found paths degrade
+  gracefully. Preserving the *original* filename is what makes their name
+  derivation work — hence names are never canonicalised when a real one exists.
 
-**Deliverable of the spike:** a short design note recommending the multi-file
-delivery mechanism, then a follow-up implementation phase.
+### What shipped
+- **`packages/client/src/container.ts`** — `isZip`, `unzipEntries` (flatten to
+  basenames, drop dir/traversal entries), `pickPrimary` (detect the story entry
+  among companions; `ClientConfig.format` override; largest-file fallback). Uses
+  **fflate** (MIT, ~3KB gz) — the one small dependency, chosen over a Zig
+  `unzip.wasm` (measured ~32KB / ~14.5KB gz, zero-dep) purely for ~85 fewer lines
+  and no build artifact.
+- **`client.ts` `create()`** — sniffs the blob; if a zip, peeks inside to pick
+  interpreter + primary filename; else preserves the URL basename (or fabricates
+  `story.<ext>` for nameless raw bytes via `extensionForFormat`). Blorb parsing
+  and the save hash now run on the *primary* bytes (so re-zipping keeps saves).
+- **Init message** — stays single-blob (`story: Uint8Array` unchanged), gains
+  `storyName`; `args[1]` is `/sys/<storyName>` (no more hardcoded `story.ulx`).
+- **`worker.ts`** — builds `/sys` by exploding a zip via `unzipEntries`, else a
+  single named file; all entries read-only. (`READ_ONLY_FILES` was a stale
+  `/var`-scoped guard referencing `story.ulx`; now correctly empty.)
+- **Delivery stays single-file end-to-end** — the worker re-unzips its own copy;
+  the client unzips only transiently for detection. The redundant unzip is the
+  (sub-ms) price of never carrying loose files across an interface.
+
+### Verified
+- `packages/client/test/container.test.ts` — zip sniff, basename flattening,
+  primary selection (alan3 `.acd`+`.a3r`, content detection, override, fallback,
+  empty). 63 client unit tests green.
+- `packages/example/tests/container.spec.js` — full client → worker → glulxe run
+  over a zipped `advent.ulx` (`advent-zipped.zip` fixture + demo picker entry):
+  "Welcome to Adventure" renders and input advances moves. All 13 e2e green.
+
+### AGT (agt2agx) — unchanged, revisit later
+agility reads the raw multi-file AGT set directly (`agil.c:842` `open_descr`), so
+this delivery *could* replace the `agt2agx` pre-pack. Kept as-is: dropping it
+needs its own case-sensitivity verification of agility's `.DA1`↔`.da1` retries
+under the WASI dir. Additive, not blocked.
+
+### Follow-ups
+- Ship real companion-game fixtures (an alan3 `.acd`+`.a3r`, a Hugo `.hlb` game)
+  and add e2e coverage that images/resources actually load server-side.
+- Client-side image rendering for companion-blorb resources (alan3 `.a3r`): the
+  client retains the whole container and can unzip its own copy to build a
+  `BlorbParser` for the companion when resolving image numbers → pixels.
 
 ---
 
@@ -486,6 +517,7 @@ windows). Larger product line; depends on Phase 5's arrangement tree existing.
 ## Sequencing
 
 Phase 1 first (unblocks glulx + z-code graphics, smallest diff, matches prior
-art). Phase 2 independent (build/shim work per interpreter). Phase 3 is a spike
-whose mechanism may also serve Hugo `.hlb` resources from Phase 2 — worth
-designing the multi-file delivery once.
+art). Phase 2 independent (build/shim work per interpreter). Phase 3 (done)
+delivers the single-file container mechanism that also serves Hugo `.hlb`
+resources from Phase 2 — so a Hugo game shipping a companion resource file now
+just needs to arrive zipped.

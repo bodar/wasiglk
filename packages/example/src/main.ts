@@ -25,6 +25,7 @@ const STORIES: Story[] = [
   { label: 'Colossal Cave — Hugo', file: 'colossal.hex' },
   { label: 'Core test — Hugo', file: 'coretest.hex' },
   { label: 'Baton — Scott Adams (scott)', file: 'baton.dat', format: 'scott' },
+  { label: 'Adventure — zipped container (glulxe)', file: 'advent-zipped.zip' },
 ];
 
 // DOM elements

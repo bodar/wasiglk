@@ -34,8 +34,8 @@ export class OpfsProvider implements StorageProvider {
   }
 
   /**
-   * Check if a path should be persisted to OPFS.
-   * Excludes read-only files like story.ulx.
+   * Check if a path should be persisted to OPFS. Only /var paths reach here;
+   * read-only game files live in /sys and never do (see READ_ONLY_FILES).
    */
   shouldPersist(path: string): boolean {
     const filename = path.split('/').pop() ?? path;

@@ -189,6 +189,24 @@ export function detectFormatFromData(data: Uint8Array): FormatInfo | null {
 }
 
 /**
+ * A representative file extension for a story format, used only to fabricate a
+ * `/sys` filename when the story arrives as raw bytes with no name of its own
+ * (e.g. `storyData` passed programmatically). When a real name is available it
+ * is always preferred — interpreters that derive companion filenames from the
+ * story name (alan3, plus, taylor, …) need the original, not a fabrication.
+ */
+export function extensionForFormat(format: StoryFormat, isBlorb = false): string {
+  if (isBlorb) return format === 'zcode' ? '.zblorb' : '.gblorb';
+  const map: Partial<Record<StoryFormat, string>> = {
+    glulx: '.ulx', zcode: '.z5', hugo: '.hex', tads2: '.gam', tads3: '.t3',
+    alan2: '.acd', alan3: '.a3c', adrift: '.taf', agt: '.agx', advsys: '.dat',
+    level9: '.l9', magnetic: '.mag', scott: '.saga', taylor: '.taylor',
+    sagaplus: '.sagaplus',
+  };
+  return map[format] ?? '.ulx';
+}
+
+/**
  * Detect format from either URL or data
  */
 export function detectFormat(

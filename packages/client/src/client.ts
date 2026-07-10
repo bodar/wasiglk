@@ -5,7 +5,8 @@
  */
 
 import { BlorbParser } from './blorb';
-import { detectFormat, type FormatInfo, type StoryFormat } from './format';
+import { detectFormat, extensionForFormat, type FormatInfo, type StoryFormat } from './format';
+import { isZip, unzipEntries, pickPrimary } from './container';
 import type { Metrics, RemGlkUpdate } from './protocol';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './worker/messages';
 import type { TranscriptStanza } from './worker/transcript';
@@ -62,6 +63,7 @@ export interface ClientConfig {
 /** Fully-resolved construction options, assembled by {@link WasiGlkClient.create}. */
 interface WasiGlkClientOptions {
   storyData: Uint8Array;
+  storyName: string;
   interpreterData: ArrayBuffer;
   formatInfo: FormatInfo;
   blorb: BlorbParser | null;
@@ -88,6 +90,7 @@ interface WasiGlkClientOptions {
  */
 export class WasiGlkClient {
   private storyData: Uint8Array;
+  private storyName: string;
   private interpreterData: ArrayBuffer;
   private formatInfo: FormatInfo;
   private blorb: BlorbParser | null = null;
@@ -110,6 +113,7 @@ export class WasiGlkClient {
 
   private constructor(options: WasiGlkClientOptions) {
     this.storyData = options.storyData;
+    this.storyName = options.storyName;
     this.interpreterData = options.interpreterData;
     this.formatInfo = options.formatInfo;
     this.blorb = options.blorb;
@@ -151,10 +155,35 @@ export class WasiGlkClient {
       throw new Error('Either storyUrl or storyData must be provided');
     }
 
-    // Detect format
-    const formatInfo = config.format
+    // The story is always ONE blob: either a bare story file, or a single-file
+    // container (a zip) holding the story plus companion resources. Delivery
+    // stays single-blob — the whole `storyData` goes to the worker, which
+    // explodes any container into /sys. Here we only peek inside to pick the
+    // interpreter and the primary filename.
+    //
+    // `primaryData` is the story file's own bytes (the container's story entry,
+    // or `storyData` itself); it drives format detection, Blorb parsing and the
+    // save hash. `storyName` is the primary file's name in /sys — the original
+    // name is preserved so interpreters that derive companion names from it
+    // (alan3, plus, taylor, …) find their siblings.
+    const configFormat = config.format
       ? { format: config.format, interpreter: getInterpreterName(config.format), isBlorb: false }
-      : detectFormat(storyUrl, storyData);
+      : undefined;
+
+    let formatInfo: FormatInfo;
+    let primaryData: Uint8Array;
+    let storyName: string;
+
+    if (isZip(storyData)) {
+      const sel = pickPrimary(unzipEntries(storyData), configFormat);
+      formatInfo = sel.formatInfo;
+      primaryData = sel.primary.data;
+      storyName = sel.primary.name;
+    } else {
+      formatInfo = configFormat ?? detectFormat(storyUrl, storyData);
+      primaryData = storyData;
+      storyName = storyFilename(storyUrl, formatInfo);
+    }
 
     // Parse Blorb (if any) to pick the interpreter and to hold image resources
     // for client-side rendering. We deliberately do NOT unwrap the executable
@@ -165,8 +194,8 @@ export class WasiGlkClient {
     // stripping to the bare .ulx/.z5 is why images previously never drew.)
     let blorb: BlorbParser | null = null;
 
-    if (formatInfo.isBlorb || BlorbParser.isBlorb(storyData)) {
-      blorb = new BlorbParser(storyData);
+    if (formatInfo.isBlorb || BlorbParser.isBlorb(primaryData)) {
+      blorb = new BlorbParser(primaryData);
       const exec = blorb.getExecutable();
       if (exec) {
         if (exec.type === 'GLUL') {
@@ -190,12 +219,11 @@ export class WasiGlkClient {
       interpreterData = await response.arrayBuffer();
     }
 
-    // Generate story ID for save isolation: gameName/versionHash
-    // This ensures different versions of the same game have separate saves
-    const gameName = storyUrl
-      ? storyUrl.split('/').pop()?.replace(/\.[^.]+$/, '') ?? 'unknown'
-      : 'story';
-    const versionHash = hashBytes(storyData).toString(16).padStart(8, '0');
+    // Generate story ID for save isolation: gameName/versionHash. Hash the
+    // story file's own bytes (not the container) so re-zipping a game keeps its
+    // saves. This ensures different versions of the same game have separate saves.
+    const gameName = (storyUrl ? basename(storyUrl) : storyName).replace(/\.[^.]+$/, '') || 'story';
+    const versionHash = hashBytes(primaryData).toString(16).padStart(8, '0');
     const storyId = `${gameName}/${versionHash}`;
 
     // Unique per-play-session id, distinct from the per-story-version storyId.
@@ -204,6 +232,7 @@ export class WasiGlkClient {
 
     return new WasiGlkClient({
       storyData,
+      storyName,
       interpreterData,
       formatInfo,
       blorb,
@@ -388,7 +417,8 @@ export class WasiGlkClient {
         type: 'init',
         interpreter: this.interpreterData,
         story: this.storyData,
-        args: [this.formatInfo.interpreter, '/sys/story.ulx'],
+        storyName: this.storyName,
+        args: [this.formatInfo.interpreter, `/sys/${this.storyName}`],
         metrics: this.metrics,
         support: this.support,
         storyId: this.storyId,
@@ -581,6 +611,25 @@ function getInterpreterName(format: StoryFormat): string {
     scott: 'scott', taylor: 'taylor', sagaplus: 'plus',
   };
   return names[format] ?? 'glulxe';
+}
+
+/** The final path segment of a URL, with any query/fragment stripped. */
+function basename(url: string): string {
+  return url.split(/[?#]/)[0].split('/').pop() ?? '';
+}
+
+/**
+ * The name a bare (non-container) story file gets in /sys. The original name is
+ * preserved when the URL carries one (interpreters that derive companion names
+ * from it need the real name); otherwise — raw bytes with no name — a canonical
+ * `story.<ext>` is fabricated from the detected format.
+ */
+function storyFilename(url: string | null, formatInfo: FormatInfo): string {
+  if (url) {
+    const name = basename(url);
+    if (name.includes('.')) return name;
+  }
+  return `story${extensionForFormat(formatInfo.format, formatInfo.isBlorb)}`;
 }
 
 function hashBytes(data: Uint8Array): number {
