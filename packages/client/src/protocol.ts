@@ -106,7 +106,44 @@ export interface RemGlkUpdate {
   disable?: boolean;  // true when no input is expected (game is processing)
   exit?: boolean;  // true when game has exited
   debugoutput?: string[];  // Debug messages from the interpreter (per GlkOte spec)
+  layout?: LayoutNode;  // Semantic window arrangement tree (Phase 5)
   message?: string;
+}
+
+/**
+ * Window arrangement layout (Phase 5).
+ *
+ * An optional, semantic n-ary space-partition tree describing how windows are
+ * split, emitted alongside the absolute `windows[]` rects. Reflow clients (chat
+ * flow, SVG, canvas) read this to place windows without reverse-engineering
+ * adjacency from pixels; absolute clients ignore it. It collapses Glk's binary
+ * pair tree into row/column containers of window leaves — see `resolve` and
+ * `layoutToFlex` in `layout.ts` for turning it into concrete geometry.
+ *
+ * Names are `Layout`-prefixed (vs the plan's bare `Node`/`Size`) to avoid
+ * colliding with DOM `Node` and similar in the public barrel.
+ */
+export type LayoutSize = { fixed: number } | { prop: number };
+
+/** A window leaf: `window` is an id into the update's `windows[]`. */
+export interface LayoutLeaf {
+  window: number;
+  /** Size along the parent container's main axis; absent = takes the remainder. */
+  size?: LayoutSize;
+}
+
+/** A row (Left/Right splits) or column (Above/Below) of child nodes. */
+export interface LayoutContainer {
+  direction: 'row' | 'column';
+  children: LayoutNode[];
+  size?: LayoutSize;
+}
+
+export type LayoutNode = LayoutLeaf | LayoutContainer;
+
+/** Type guard: is this layout node a container (vs a window leaf)? */
+export function isLayoutContainer(node: LayoutNode): node is LayoutContainer {
+  return 'children' in node;
 }
 
 /** Window layout update from the interpreter. */

@@ -14,7 +14,7 @@ test.describe('Save/Restore', () => {
 
     const input = page.locator('#input');
     const send = page.locator('#send');
-    const output = page.locator('#output');
+    const output = page.locator('.win-buffer');
 
     // Save the game
     await input.fill('save');
@@ -41,8 +41,8 @@ test.describe('Save/Restore', () => {
 
     const input = page.locator('#input');
     const send = page.locator('#send');
-    const output = page.locator('#output');
-    const statusBar = page.locator('#game-status-bar');
+    const output = page.locator('.win-buffer');
+    const statusBar = page.locator('.win-grid');
 
     // Make a move to change game state
     await input.fill('in');

@@ -81,9 +81,23 @@ export type {
   SpecialInput,
   ImageAlignment,
   Metrics,
+  LayoutNode,
+  LayoutLeaf,
+  LayoutContainer,
+  LayoutSize,
 } from './protocol';
 
-export { IMAGE_ALIGNMENT_VALUES } from './protocol';
+export { IMAGE_ALIGNMENT_VALUES, isLayoutContainer } from './protocol';
+
+// Window arrangement resolution (layout tree -> geometry / flex DOM)
+export { resolve, layoutToFlex, fixedToPx } from './layout';
+export type {
+  WindowKind,
+  WindowKindLookup,
+  ResolvedRegion,
+  ResolveArea,
+  FlexOptions,
+} from './layout';
 
 // Blorb parser
 export { BlorbParser } from './blorb';

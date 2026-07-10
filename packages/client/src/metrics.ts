@@ -21,21 +21,23 @@ import type { Metrics } from './protocol';
 
 export interface MeasureTargets {
   /**
-   * Element whose content-box HEIGHT is the display height. This is the
-   * viewport/game area the windows live in.
+   * Element whose content box is the display area: its width becomes
+   * `Metrics.width` and its height `Metrics.height`. This is the viewport/game
+   * area the windows live in.
    */
   area: HTMLElement;
   /**
-   * Monospace (grid) element. Its content-box WIDTH becomes `Metrics.width`
-   * (grid windows are cell-positioned, so the display width must match the
-   * grid's own column), and it is probed for grid character metrics.
-   * Defaults to `area`.
+   * A monospace (grid) window element, probed for grid character metrics and
+   * whose CSS padding becomes `gridmarginx/y` (the px inside a grid window not
+   * usable for text). Defaults to `area`. Pass a real `.win-grid` element so the
+   * font and padding measured match how the grid actually renders.
    */
   grid?: HTMLElement;
   /**
-   * Proportional (buffer) element, probed for buffer character metrics.
-   * Defaults to `grid` (else `area`). Buffer windows wrap via CSS, so their
-   * char width only informs the interpreter's column estimate.
+   * A proportional (buffer) window element, probed for buffer character metrics
+   * and whose CSS padding becomes `buffermarginx/y`. Defaults to `grid` (else
+   * `area`). Buffer windows wrap via CSS, so their char width only informs the
+   * interpreter's column estimate.
    */
   buffer?: HTMLElement;
 }
@@ -52,6 +54,18 @@ function contentHeight(el: HTMLElement): number {
   const cs = getComputedStyle(el);
   const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
   return el.clientHeight - pad;
+}
+
+/** Total horizontal padding (left+right) in px — the window's x margin. */
+function paddingX(el: HTMLElement): number {
+  const cs = getComputedStyle(el);
+  return (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+}
+
+/** Total vertical padding (top+bottom) in px — the window's y margin. */
+function paddingY(el: HTMLElement): number {
+  const cs = getComputedStyle(el);
+  return (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
 }
 
 /**
@@ -90,11 +104,15 @@ export function measureMetrics(targets: MeasureTargets): Metrics {
   const buffer = targets.buffer ?? grid;
 
   return {
-    width: Math.max(1, Math.floor(contentWidth(grid))),
+    width: Math.max(1, Math.floor(contentWidth(area))),
     height: Math.max(1, Math.floor(contentHeight(area))),
     gridcharwidth: charWidthPx(grid),
     gridcharheight: lineHeightPx(grid),
+    gridmarginx: paddingX(grid),
+    gridmarginy: paddingY(grid),
     buffercharwidth: charWidthPx(buffer),
     buffercharheight: lineHeightPx(buffer),
+    buffermarginx: paddingX(buffer),
+    buffermarginy: paddingY(buffer),
   };
 }

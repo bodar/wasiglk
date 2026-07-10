@@ -27,12 +27,17 @@ import {
 import { AsyncFSAFile } from './storage/async-fsa-file';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './messages';
 import { isZip, unzipEntries } from '../container';
-import type { InputEvent, RemGlkUpdate } from '../protocol';
+import type { InputEvent, RemGlkUpdate, Metrics } from '../protocol';
 import { TranscriptRecorder } from './transcript';
 import { ReplayQueue } from './replay-queue';
 
 let inputResolve: ((value: string) => void) | null = null;
 let generation = 0;
+// Latest arrange (resize) metrics awaiting delivery. An arrange that arrives
+// while the interpreter is mid-turn (no blocked stdin read) would otherwise be
+// dropped; we stash the newest here and flush it the moment stdin next blocks,
+// so a resize is never lost — only coalesced to the most recent size.
+let pendingArrangeMetrics: Metrics | null = null;
 let currentInputRequest: { windowId: number; type: 'line' | 'char' } | null = null;
 let timerIntervalId: ReturnType<typeof setInterval> | null = null;
 
@@ -62,15 +67,17 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMessage>) => {
       value: msg.value,
     };
     resolve(JSON.stringify(inputEvent));
-  } else if (msg.type === 'arrange' && inputResolve) {
-    // Send arrange event to interrupt current input request
-    const resolve = inputResolve;
-    inputResolve = null;
-    resolve(JSON.stringify({
-      type: 'arrange',
-      gen: generation,
-      metrics: msg.metrics,
-    }));
+  } else if (msg.type === 'arrange') {
+    // Record the newest size and deliver immediately if a read is blocked;
+    // otherwise provideInput() flushes it when stdin next blocks.
+    pendingArrangeMetrics = msg.metrics;
+    if (inputResolve) {
+      const resolve = inputResolve;
+      inputResolve = null;
+      const metrics = pendingArrangeMetrics;
+      pendingArrangeMetrics = null;
+      resolve(JSON.stringify({ type: 'arrange', gen: generation, metrics }));
+    }
   } else if (msg.type === 'mouse' && inputResolve) {
     // Send mouse click event to interrupt current input request
     const resolve = inputResolve;
@@ -207,6 +214,14 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
           response: 'fileref_prompt',
           value: result.filename,
         });
+      }
+
+      // A resize that arrived mid-turn was stashed; deliver it now rather than
+      // block, so the game re-lays-out at the current size before prompting.
+      if (pendingArrangeMetrics) {
+        const metrics = pendingArrangeMetrics;
+        pendingArrangeMetrics = null;
+        return JSON.stringify({ type: 'arrange', gen: generation, metrics });
       }
 
       return new Promise<string>(resolve => { inputResolve = resolve; });
@@ -514,6 +529,7 @@ function mergeRemGlkUpdates(updates: RemGlkUpdate[]): RemGlkUpdate {
     if (update.type === 'error') merged.type = 'error';
     if (update.message) merged.message = update.message;
     if (update.windows) merged.windows = update.windows;
+    if (update.layout) merged.layout = update.layout;
     if (update.input) merged.input = update.input;
     if (update.timer !== undefined) merged.timer = update.timer;
     if (update.specialinput) merged.specialinput = update.specialinput;

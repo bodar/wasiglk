@@ -8,7 +8,7 @@ test.describe('WasiGlk Example', () => {
     await expect(page.locator('#status')).toContainText('Game initialized', { timeout: 10000 });
 
     // Check that output contains game text (first location description)
-    const output = page.locator('#output');
+    const output = page.locator('.win-buffer');
     await expect(output).toContainText('End Of Road', { timeout: 5000 });
     await expect(output).toContainText('Welcome to Adventure');
 
@@ -24,7 +24,7 @@ test.describe('WasiGlk Example', () => {
     await expect(page.locator('#status')).toContainText('Game initialized', { timeout: 10000 });
 
     // Status bar should show location and moves count
-    const statusBar = page.locator('#game-status-bar');
+    const statusBar = page.locator('.win-grid');
     await expect(statusBar).toBeVisible({ timeout: 5000 });
     // Check for location (beginning of status line)
     await expect(statusBar).toContainText('At End Of Road');
@@ -40,7 +40,7 @@ test.describe('WasiGlk Example', () => {
     await expect(page.locator('#input')).toBeEnabled();
 
     // Get initial move count from status bar
-    const statusBar = page.locator('#game-status-bar');
+    const statusBar = page.locator('.win-grid');
     await expect(statusBar).toContainText('Moves: 1', { timeout: 5000 });
 
     // Type a command
@@ -61,7 +61,7 @@ test.describe('WasiGlk Example', () => {
     await expect(page.locator('#status')).toContainText('Game initialized', { timeout: 10000 });
     await expect(page.locator('#input')).toBeEnabled();
 
-    const statusBar = page.locator('#game-status-bar');
+    const statusBar = page.locator('.win-grid');
     const input = page.locator('#input');
     const send = page.locator('#send');
 

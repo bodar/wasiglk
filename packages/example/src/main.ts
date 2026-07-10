@@ -1,10 +1,25 @@
 /**
  * WasiGlk Example
  *
- * Demonstrates using @bodar/wasiglk to run an interactive fiction interpreter.
+ * Demonstrates using @bodar/wasiglk to run an interactive fiction interpreter,
+ * rendering the interpreter's window arrangement as a responsive, stretchy flex
+ * layout driven by the `layout` tree on each update.
  */
 
-import { createClient, measureMetrics, type RemGlkUpdate, type ContentSpan, type DrawOperation, type StoryFormat } from '@bodar/wasiglk';
+import {
+  createClient,
+  measureMetrics,
+  layoutToFlex,
+  SvgRenderer,
+  applyDrawOperations,
+  type RemGlkUpdate,
+  type ContentUpdate,
+  type ContentSpan,
+  type LayoutNode,
+  type WindowKind,
+  type Metrics,
+  type StoryFormat,
+} from '@bodar/wasiglk';
 
 // The test stories we ship, one or more per interpreter type. `format` is only
 // set where extension-based detection would be wrong (baton.dat is a Scott
@@ -31,11 +46,10 @@ const STORIES: Story[] = [
 ];
 
 // DOM elements
-const outputEl = document.getElementById('output')!;
 const inputEl = document.getElementById('input') as HTMLInputElement;
 const sendBtn = document.getElementById('send') as HTMLButtonElement;
 const statusEl = document.getElementById('status')!;
-const gameStatusBar = document.getElementById('game-status-bar')!;
+const layoutRoot = document.getElementById('game-layout')!;
 
 // Client instance
 let client: Awaited<ReturnType<typeof createClient>> | null = null;
@@ -44,59 +58,117 @@ let client: Awaited<ReturnType<typeof createClient>> | null = null;
 // loop (still draining the previous client) stops touching the DOM.
 let runGen = 0;
 
-// Track windows by ID and type
-const windows = new Map<number, { type: 'buffer' | 'grid' | 'graphics' | 'pair' }>();
+// One persistent record per window id. The DOM element survives rearrangement
+// (layoutToFlex re-parents it) so buffer scroll position and accumulated
+// content are not lost when the window tree changes.
+interface WinRec {
+  kind: WindowKind;
+  el: HTMLElement;
+  renderer?: SvgRenderer; // graphics only
+  gw?: number; // graphics canvas width (px)
+  gh?: number; // graphics canvas height (px)
+  gridLines?: string[]; // grid: text per line index
+}
+const wins = new Map<number, WinRec>();
 
-// Canvas per graphics window, and the current default fill colour per window.
-const graphicsCanvases = new Map<number, HTMLCanvasElement>();
-const graphicsColor = new Map<number, string>();
+// The most recent layout tree, re-applied on structural changes.
+let currentLayout: LayoutNode | null = null;
 
-// Text of each grid (status) window's lines, indexed by window id then line
-// number, so a multi-line status window renders as separate lines rather than
-// one concatenated string.
-const gridLineText = new Map<number, string[]>();
-
-// Lazily create (or fetch) the canvas for a graphics window, sized to the
-// window's pixel dimensions and inserted above the text output.
-function ensureGraphicsCanvas(id: number, width: number, height: number): HTMLCanvasElement {
-  let canvas = graphicsCanvases.get(id);
-  if (!canvas) {
-    canvas = document.createElement('canvas');
-    canvas.style.display = 'block';
-    canvas.style.border = '1px solid #888';
-    canvas.style.margin = '4px 0';
-    outputEl.parentElement!.insertBefore(canvas, outputEl);
-    graphicsCanvases.set(id, canvas);
-  }
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-  return canvas;
+// Measure metrics from the live DOM: the layout area for overall size, and a
+// real grid/buffer window element (when one exists) for that window kind's font
+// and padding. Everything comes from CSS — nothing is hardcoded — so a window's
+// padding is reported as its `*margin*` and the interpreter budgets for it when
+// sizing fixed splits (a 1-row status window gets one line + its padding, not a
+// clipped line).
+function metricsFor(): Metrics {
+  const grid = layoutRoot.querySelector<HTMLElement>('.win-grid') ?? undefined;
+  const buffer = layoutRoot.querySelector<HTMLElement>('.win-buffer') ?? undefined;
+  return measureMetrics({ area: layoutRoot, grid, buffer });
 }
 
-// Apply the interpreter's draw operations to a graphics window's canvas.
-function drawGraphics(id: number, ops: DrawOperation[]): void {
-  const canvas = graphicsCanvases.get(id);
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+// Notify the interpreter of the current metrics, but only when they actually
+// changed. This both drives resize reflow and corrects the first measurement:
+// the initial metrics are taken before any window exists (so grid/buffer fall
+// back to the layout area's font, zero margins), and once the real window
+// elements mount, re-measuring yields their true font and padding. Guarding on
+// equality means the game re-lays-out exactly once and then converges.
+let lastMetricsJson = '';
+function sendMetricsIfChanged(): void {
+  if (!client) return;
+  const metrics = metricsFor();
+  const json = JSON.stringify(metrics);
+  if (json === lastMetricsJson) return;
+  lastMetricsJson = json;
+  // Tell the interpreter (so it re-wraps grid columns / buffer text) AND
+  // recompute the flex basis locally — window sizes are derived client-side
+  // from metrics + the layout tree, so a metrics change re-lays-out here
+  // without waiting for the game to re-emit `layout`.
+  client.sendArrange(metrics);
+  if (currentLayout) applyLayout(metrics);
+}
 
-  for (const op of ops) {
-    if (op.special === 'setcolor' && op.color) {
-      graphicsColor.set(id, op.color);
-    } else if (op.special === 'fill') {
-      ctx.fillStyle = op.color ?? graphicsColor.get(id) ?? '#000000';
-      ctx.fillRect(op.x ?? 0, op.y ?? 0, op.width ?? canvas.width, op.height ?? canvas.height);
-    } else if (op.special === 'image') {
-      const url = (op.image !== undefined ? client?.getImageUrl(op.image) : undefined) ?? op.url;
-      if (!url) continue;
-      const x = op.x ?? 0, y = op.y ?? 0, w = op.width, h = op.height;
-      const img = new Image();
-      img.onload = () => ctx.drawImage(img, x, y, w ?? img.width, h ?? img.height);
-      img.src = url;
-    }
+// Create (once) the persistent DOM element for a window of the given kind.
+function ensureWindow(id: number, kind: WindowKind): WinRec {
+  let rec = wins.get(id);
+  if (rec) return rec;
+
+  let el: HTMLElement;
+  let renderer: SvgRenderer | undefined;
+  if (kind === 'graphics') {
+    el = document.createElement('div');
+    el.className = 'win win-graphics';
+    renderer = new SvgRenderer();
+    renderer.mount(el);
+  } else if (kind === 'grid') {
+    el = document.createElement('pre');
+    el.className = 'win win-grid';
+  } else {
+    // buffer (and any unexpected kind) render as scrollable text.
+    el = document.createElement('div');
+    el.className = 'win win-buffer';
   }
+  rec = { kind, el, renderer, gridLines: kind === 'grid' ? [] : undefined };
+  wins.set(id, rec);
+  return rec;
+}
+
+// Rebuild the flex layout DOM from the current arrangement tree with the given
+// metrics, reusing each window's persistent element.
+function applyLayout(metrics: Metrics): void {
+  if (!currentLayout) return;
+  const tree = layoutToFlex(currentLayout, {
+    metrics,
+    windowKind: (id) => wins.get(id)?.kind,
+    renderLeaf: (id, kind) => ensureWindow(id, kind ?? 'buffer').el,
+  });
+  layoutRoot.replaceChildren(tree);
+}
+
+// Extract text from a content span.
+function spanText(span: ContentSpan): string {
+  if (typeof span === 'string') return span;
+  if ('text' in span) return span.text;
+  return '';
+}
+
+// Append an inline image (Glk image drawn into a buffer window) to a buffer el.
+function appendBufferImage(el: HTMLElement, span: Extract<ContentSpan, { special: 'image' }>): void {
+  const url = (span.image !== undefined ? client?.getImageUrl(span.image) : undefined) ?? span.url;
+  if (!url) return;
+  const img = document.createElement('img');
+  img.src = url;
+  if (span.width) img.width = span.width;
+  if (span.height) img.height = span.height;
+  img.alt = span.alttext ?? '';
+  switch (span.alignment) {
+    case 'inlineup': img.style.verticalAlign = 'text-top'; break;
+    case 'inlinedown': img.style.verticalAlign = 'text-bottom'; break;
+    case 'inlinecenter': img.style.verticalAlign = 'middle'; break;
+    case 'marginleft': img.style.cssFloat = 'left'; break;
+    case 'marginright': img.style.cssFloat = 'right'; break;
+  }
+  el.appendChild(img);
+  el.scrollTop = el.scrollHeight;
 }
 
 // Track initialization state
@@ -117,33 +189,6 @@ function checkJSPISupport(): { supported: boolean; reason?: string } {
   }
 }
 
-// Extract text from a content span
-function spanText(span: ContentSpan): string {
-  if (typeof span === 'string') return span;
-  if ('text' in span) return span.text;
-  return '';
-}
-
-// Append an inline image (Glk image drawn into a buffer window) to the output.
-function appendBufferImage(span: Extract<ContentSpan, { special: 'image' }>): void {
-  const url = (span.image !== undefined ? client?.getImageUrl(span.image) : undefined) ?? span.url;
-  if (!url) return;
-  const img = document.createElement('img');
-  img.src = url;
-  if (span.width) img.width = span.width;
-  if (span.height) img.height = span.height;
-  img.alt = span.alttext ?? '';
-  switch (span.alignment) {
-    case 'inlineup': img.style.verticalAlign = 'text-top'; break;
-    case 'inlinedown': img.style.verticalAlign = 'text-bottom'; break;
-    case 'inlinecenter': img.style.verticalAlign = 'middle'; break;
-    case 'marginleft': img.style.cssFloat = 'left'; break;
-    case 'marginright': img.style.cssFloat = 'right'; break;
-  }
-  outputEl.appendChild(img);
-  outputEl.scrollTop = outputEl.scrollHeight;
-}
-
 function setStatus(text: string, type: 'info' | 'error' | 'success' = 'info'): void {
   statusEl.textContent = text;
   statusEl.className = `status ${type}`;
@@ -160,18 +205,64 @@ function disableInput(): void {
   sendBtn.disabled = true;
 }
 
-// Handle updates from the interpreter
+// Render one content update into its window's element.
+function renderContent(content: ContentUpdate): void {
+  const rec = wins.get(content.id);
+  if (!rec) return;
+
+  if (rec.kind === 'graphics') {
+    if (content.clear) rec.renderer?.clear();
+    if (content.draw && rec.renderer) {
+      applyDrawOperations(rec.renderer, content.draw, {
+        getImageUrl: (n) => client?.getImageUrl(n),
+        width: rec.gw ?? 0,
+        height: rec.gh ?? 0,
+      });
+    }
+  } else if (rec.kind === 'grid') {
+    // Grid updates carry only the changed lines, each with its index.
+    let lines = rec.gridLines!;
+    if (content.clear) {
+      lines = [];
+      rec.gridLines = lines;
+    }
+    for (const line of content.lines ?? []) {
+      let text = '';
+      for (const span of line.content ?? []) text += spanText(span);
+      lines[line.line] = text;
+    }
+    rec.el.textContent = lines.map((l) => l ?? '').join('\n');
+  } else {
+    // Buffer: append paragraphs' text and inline images.
+    if (content.clear) rec.el.replaceChildren();
+    for (const para of content.text ?? []) {
+      for (const span of para.content ?? []) {
+        if (typeof span === 'object' && 'special' in span && span.special === 'image') {
+          appendBufferImage(rec.el, span);
+        } else {
+          rec.el.appendChild(document.createTextNode(spanText(span)));
+        }
+      }
+    }
+    rec.el.scrollTop = rec.el.scrollHeight;
+  }
+}
+
+// Handle updates from the interpreter.
 function handleUpdate(update: RemGlkUpdate): void {
   if (update.type === 'error') {
     setStatus(`Error: ${update.message}`, 'error');
     return;
   }
 
+  // 1. Windows: register kinds and (for graphics) size the renderer.
   if (update.windows) {
     for (const win of update.windows) {
-      windows.set(win.id, { type: win.type });
-      if (win.type === 'graphics') {
-        ensureGraphicsCanvas(win.id, win.graphwidth ?? win.width, win.graphheight ?? win.height);
+      const rec = ensureWindow(win.id, win.type);
+      if (rec.kind === 'graphics') {
+        rec.gw = win.graphwidth ?? win.width;
+        rec.gh = win.graphheight ?? win.height;
+        rec.renderer?.setSize(rec.gw, rec.gh);
       }
     }
     if (!initialized) {
@@ -180,54 +271,19 @@ function handleUpdate(update: RemGlkUpdate): void {
     }
   }
 
-  if (update.content) {
-    for (const content of update.content) {
-      const win = windows.get(content.id);
+  // 2. Layout: rebuild the responsive flex tree (structural change only).
+  if (update.layout) {
+    currentLayout = update.layout;
+    applyLayout(metricsFor());
+    // The windows are now in the DOM; their real font/padding may differ from
+    // the metrics used just now (measured before they existed), so re-measure
+    // next frame and re-lay-out if they changed.
+    requestAnimationFrame(sendMetricsIfChanged);
+  }
 
-      if (win?.type === 'graphics') {
-        const canvas = graphicsCanvases.get(content.id);
-        if (content.clear && canvas) {
-          canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
-        }
-        if (content.draw) {
-          drawGraphics(content.id, content.draw);
-        }
-      } else if (win?.type === 'grid') {
-        // Grid window (status bar): updates carry only the changed lines, each
-        // with its line number. Accumulate per line, render the window with a
-        // newline between lines (grid sizing is now correct, so lines don't
-        // spuriously wrap).
-        let lines = gridLineText.get(content.id);
-        if (!lines || content.clear) {
-          lines = [];
-          gridLineText.set(content.id, lines);
-        }
-        for (const line of content.lines ?? []) {
-          let text = '';
-          for (const span of line.content ?? []) {
-            text += spanText(span);
-          }
-          lines[line.line] = text;
-        }
-        gameStatusBar.textContent = lines.map((l) => l ?? '').join('\n');
-        gameStatusBar.classList.add('visible');
-      } else {
-        // Buffer window - append text and inline images from paragraphs.
-        if (content.clear) {
-          outputEl.replaceChildren();
-        }
-        for (const para of content.text ?? []) {
-          for (const span of para.content ?? []) {
-            if (typeof span === 'object' && 'special' in span && span.special === 'image') {
-              appendBufferImage(span);
-            } else {
-              outputEl.appendChild(document.createTextNode(spanText(span)));
-            }
-          }
-        }
-        outputEl.scrollTop = outputEl.scrollHeight;
-      }
-    }
+  // 3. Content: render into each window's persistent element.
+  if (update.content) {
+    for (const content of update.content) renderContent(content);
   }
 
   if (update.input) {
@@ -254,17 +310,29 @@ inputEl.addEventListener('keypress', (e) => {
 
 sendBtn.addEventListener('click', handleSend);
 
+// Responsive: on container resize, re-measure and notify the interpreter so it
+// re-lays-out and re-wraps text at the new size. Coalesced to one arrange per
+// animation frame. The flex layout itself stretches immediately; the arrange
+// keeps character-cell sizes (grid columns, wrap width) correct.
+let arrangeQueued = false;
+const resizeObserver = new ResizeObserver(() => {
+  if (arrangeQueued || !client) return;
+  arrangeQueued = true;
+  requestAnimationFrame(() => {
+    arrangeQueued = false;
+    sendMetricsIfChanged();
+  });
+});
+resizeObserver.observe(layoutRoot);
+
 // Reset all per-story UI and state before (re)starting an interpreter.
 function resetForNewStory(): void {
-  windows.clear();
-  for (const canvas of graphicsCanvases.values()) canvas.remove();
-  graphicsCanvases.clear();
-  graphicsColor.clear();
-  gridLineText.clear();
+  for (const rec of wins.values()) rec.renderer?.dispose();
+  wins.clear();
+  currentLayout = null;
+  lastMetricsJson = '';
+  layoutRoot.replaceChildren();
   initialized = false;
-  outputEl.textContent = '';
-  gameStatusBar.textContent = '';
-  gameStatusBar.classList.remove('visible');
   disableInput();
 }
 
@@ -282,13 +350,17 @@ async function startStory(story: Story): Promise<void> {
   setStatus(`Loading ${story.file}...`, 'info');
 
   try {
-    // Measure the real pixel size of the output area and its font, so the
-    // interpreter converts to character cells correctly.
+    // Measure the real pixel size of the layout area and its font, so the
+    // interpreter converts to character cells correctly. No window exists yet,
+    // so this uses the layout area's font; applyLayout re-measures against the
+    // real window elements once they mount.
+    const initialMetrics = metricsFor();
+    lastMetricsJson = JSON.stringify(initialMetrics);
     client = await createClient({
       storyUrl: `/${story.file}`,
       ...(story.format ? { format: story.format } : {}),
       workerUrl: '/worker.js',
-      metrics: measureMetrics({ area: outputEl }),
+      metrics: initialMetrics,
     });
 
     // A newer selection may have superseded us during the async load.

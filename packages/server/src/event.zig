@@ -5,6 +5,7 @@ const types = @import("types.zig");
 const state = @import("state.zig");
 const protocol = @import("protocol.zig");
 const dispatch = @import("dispatch.zig");
+const window = @import("window.zig");
 
 const glui32 = types.glui32;
 const winid_t = types.winid_t;
@@ -174,6 +175,10 @@ export fn glk_select(event: ?*event_t) callconv(.c) void {
             if (m.width) |w| state.client_metrics.width = w;
             if (m.height) |h| state.client_metrics.height = h;
         }
+        // Re-lay-out against the new display size so glk_window_get_size reports
+        // the fresh cols/rows the game needs to re-wrap. Without this the game
+        // sees stale sizes on resize (rects only recompute on window ops).
+        window.recalculateLayout();
         event.?.type = evtype.Arrange;
         event.?.win = @ptrCast(state.root_window);
         event.?.val1 = 0;

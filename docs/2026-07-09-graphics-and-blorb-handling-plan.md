@@ -429,7 +429,57 @@ While building the demo, factor genuinely reusable pieces into
 Keep rendering (DOM/canvas) app-specific; only the measurement/metrics maths is
 shared.
 
-## Phase 5 — Responsive multi-window layout (arrangement hint)
+## Phase 5 — Responsive multi-window layout (arrangement hint) ✅ DONE (desktop; mobile + upstream deferred)
+
+The arrangement tree, its shared client resolver, and a responsive flex-DOM demo
+shipped. Mobile swipe-out panels and the asyncglk upstream pitch are deferred
+follow-ups (below).
+
+### What shipped
+- **Server fold** (`protocol.zig`): `LayoutSize`/`LayoutNode` tagged unions with
+  hand-rolled `jsonStringify` (mirrors `ContentSpan`/`TimerValue`); `foldWindow`
+  walks the `WindowData` binary pair tree → n-ary `row`/`column` containers,
+  collapsing same-direction *unsized* chains (sized ones stay nested to preserve
+  group proportion). Emitted as the optional `layout` key on `StateUpdateJson`,
+  built into an arena in `sendUpdate` and gated on `pending_windows_len > 0` so
+  it travels in lockstep with `windows[]` (structural turns only). Fold lives in
+  `protocol.zig` to avoid the window↔protocol import cycle. Inline Zig tests
+  cover leaf/column/collapse/nesting/serialization.
+- **Arrange bug fix** (`event.zig`): the arrange handler now calls
+  `window.recalculateLayout()` so `glk_window_get_size` reports fresh cols/rows
+  after a resize (was stale — rects only recomputed on window ops).
+- **Worker arrange-drop fix** (`worker/worker.ts`): a resize arriving mid-turn
+  (no blocked stdin read) was silently dropped; the newest metrics are now
+  stashed and flushed the moment stdin next blocks. Also `mergeRemGlkUpdates`
+  now carries the `layout` field (it whitelists fields; layout was being lost on
+  multi-line turns).
+- **Shared client lib** (`layout.ts`, exported from `@bodar/wasiglk`):
+  `resolve(node, area, metrics, windowKind)` → absolute pixel regions (for
+  canvas/SVG-absolute renderers) and `layoutToFlex(node, {metrics, windowKind,
+  renderLeaf})` → a nested CSS flexbox subtree (for reflow renderers). Both share
+  `fixedToPx` (cells→px via grid/buffer char metrics + margin; graphics/pair =
+  px), mirroring the server's `fixedSplitPx`. TS types `LayoutNode`/`LayoutLeaf`/
+  `LayoutContainer`/`LayoutSize` on `protocol.ts` (prefixed vs the plan's bare
+  `Node`/`Size` to avoid DOM collisions), `layout?` on `RemGlkUpdate`. Pure-core
+  unit tests (`test/layout.test.ts`) cover `fixedToPx` + `resolve` distribution.
+- **Responsive demo** (`example/src/main.ts` + `public/index.html`): builds the
+  window arrangement as nested flex from the `layout` tree via `layoutToFlex`,
+  with persistent per-window elements re-parented on rearrange (scroll/content
+  survive). Graphics windows now use the shared `SvgRenderer` +
+  `applyDrawOperations` (dropped the hand-rolled canvas dup). A `ResizeObserver`
+  re-measures metrics and calls `client.sendArrange` (rAF-debounced), wiring the
+  previously-unused responsive path. e2e (`tests/layout.spec.js`) asserts the
+  nested flex column and reflow-on-resize; all 16 e2e + 7 regtests + 76 client +
+  Zig suites green (no regtest rebaseline needed — `layout` is additive).
+
+### Deferred follow-ups
+- **Mobile swipe-out panels**: map the tree to a main scroll view + collapsed
+  panels below a width breakpoint (design in "On mobile mapping" below).
+- **Upstream `layout` to asyncglk**: reflow displays are a real gap there.
+
+---
+
+### Original design (retained for reference)
 
 Goal: use desktop real estate for multi-window games (status/map panes left &
 right of the main text) and collapse those panes into swipe-out panels on

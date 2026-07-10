@@ -126,6 +126,134 @@ pub const WindowUpdate = struct {
     graphheight: ?u32 = null,
 };
 
+// ============== Window arrangement layout (Phase 5) ==============
+//
+// A semantic n-ary space-partition tree emitted as the optional `layout` key on
+// updates. Reflow clients read it to place windows without pixel archaeology;
+// absolute clients ignore it and use the `windows[]` rects. Glk stores the
+// arrangement as a strict binary pair tree and overloads pair windows as
+// addressable nodes; we collapse that into the n-ary essence: row/column
+// containers of leaves, each child optionally sized (a `key` window's fixed
+// cells / proportional %, or the remainder when unsized). See docs Phase 5.
+
+pub const LayoutDirection = enum { row, column };
+
+/// A child's size along its container's main axis. `fixed` is in the sized
+/// window's natural unit (character cells for text, pixels for graphics) — the
+/// client converts using its metrics; `prop` is a 0-100 percentage.
+pub const LayoutSize = union(enum) {
+    fixed: u32,
+    prop: u32,
+
+    pub fn jsonStringify(self: @This(), jw: anytype) !void {
+        try jw.beginObject();
+        switch (self) {
+            .fixed => |v| {
+                try jw.objectField("fixed");
+                try jw.write(v);
+            },
+            .prop => |v| {
+                try jw.objectField("prop");
+                try jw.write(v);
+            },
+        }
+        try jw.endObject();
+    }
+};
+
+pub const LayoutLeaf = struct {
+    window: u32,
+    size: ?LayoutSize = null,
+};
+
+pub const LayoutContainer = struct {
+    direction: LayoutDirection,
+    children: []const LayoutNode,
+    size: ?LayoutSize = null,
+};
+
+/// One node of the arrangement tree: a window leaf or a row/column container.
+pub const LayoutNode = union(enum) {
+    leaf: LayoutLeaf,
+    container: LayoutContainer,
+
+    pub fn jsonStringify(self: @This(), jw: anytype) !void {
+        try jw.beginObject();
+        switch (self) {
+            .leaf => |l| {
+                try jw.objectField("window");
+                try jw.write(l.window);
+                if (l.size) |s| {
+                    try jw.objectField("size");
+                    try jw.write(s);
+                }
+            },
+            .container => |c| {
+                try jw.objectField("direction");
+                try jw.write(c.direction);
+                try jw.objectField("children");
+                try jw.write(c.children);
+                if (c.size) |s| {
+                    try jw.objectField("size");
+                    try jw.write(s);
+                }
+            },
+        }
+        try jw.endObject();
+    }
+};
+
+/// row for Left/Right splits, column for Above/Below.
+fn layoutDir(method: glui32) LayoutDirection {
+    const d = method & types.winmethod.DirMask;
+    return if (d == types.winmethod.Left or d == types.winmethod.Right) .row else .column;
+}
+
+/// Fold the binary pair tree rooted at `win` into an n-ary LayoutNode, allocating
+/// child slices from `a`. `size` is the size this node was assigned by its parent
+/// split (null = remainder / takes the leftover space). Pure structure — no
+/// pixel metrics; the client resolves geometry from its own metrics.
+pub fn foldWindow(a: std.mem.Allocator, win: *WindowData, size: ?LayoutSize) std.mem.Allocator.Error!LayoutNode {
+    // Leaves (and defensively, malformed pairs) map straight to a leaf node.
+    if (win.win_type != wintype.Pair) return .{ .leaf = .{ .window = win.id, .size = size } };
+    const c1 = win.child1 orelse return .{ .leaf = .{ .window = win.id, .size = size } };
+    const c2 = win.child2 orelse return .{ .leaf = .{ .window = win.id, .size = size } };
+
+    const dir = layoutDir(win.split_method);
+    const division = win.split_method & types.winmethod.DivisionMask;
+    const child_size: LayoutSize = if (division == types.winmethod.Fixed)
+        .{ .fixed = win.split_size }
+    else
+        .{ .prop = win.split_size };
+
+    // The key (sized) child is child1 for Left/Above, child2 for Right/Below —
+    // matching layoutWindow's split. The other child takes the remainder.
+    const dbits = win.split_method & types.winmethod.DirMask;
+    const key_is_c1 = (dbits == types.winmethod.Left or dbits == types.winmethod.Above);
+
+    var children: std.ArrayList(LayoutNode) = .{};
+    try appendFoldChild(a, &children, c1, if (key_is_c1) child_size else null, dir);
+    try appendFoldChild(a, &children, c2, if (key_is_c1) null else child_size, dir);
+    return .{ .container = .{ .direction = dir, .children = try children.toOwnedSlice(a), .size = size } };
+}
+
+/// Append a folded child, collapsing same-direction chains: an *unsized*
+/// child pair with the same direction is spliced in (its children become ours)
+/// so three stacked splits render as one n-ary column rather than nested pairs.
+/// A *sized* same-direction pair stays nested — flattening would lose the size
+/// that applies to the group as a whole.
+fn appendFoldChild(a: std.mem.Allocator, children: *std.ArrayList(LayoutNode), child: *WindowData, size: ?LayoutSize, parent_dir: LayoutDirection) std.mem.Allocator.Error!void {
+    if (child.win_type == wintype.Pair and size == null and layoutDir(child.split_method) == parent_dir) {
+        const sub = try foldWindow(a, child, null);
+        switch (sub) {
+            .container => |c| for (c.children) |gc| try children.append(a, gc),
+            .leaf => try children.append(a, sub),
+        }
+        return;
+    }
+    try children.append(a, try foldWindow(a, child, size));
+}
+
 // Text span within paragraph content (GlkOte spec)
 pub const TextSpan = struct {
     style: []const u8 = "normal",
@@ -285,6 +413,7 @@ pub const StateUpdateJson = struct {
     disable: ?bool = null, // true when no input expected
     exit: ?bool = null, // true when game exits
     debugoutput: ?[]const []const u8 = null, // Debug messages
+    layout: ?LayoutNode = null, // Semantic window arrangement tree (Phase 5)
 };
 
 const ErrorResponse = struct {
@@ -425,6 +554,19 @@ pub fn sendUpdate() void {
     else
         null;
 
+    // Fold the window tree into the arrangement layout, in lockstep with the
+    // window rects: whenever we emit fresh `windows[]` (i.e. the tree was
+    // (re)laid-out) we emit the fresh `layout`. Content-only turns leave it
+    // null. Built into an arena freed once the JSON is written.
+    var layout_arena = std.heap.ArenaAllocator.init(allocator);
+    defer layout_arena.deinit();
+    var layout_node: ?LayoutNode = null;
+    if (pending_windows_len > 0) {
+        if (state.root_window) |root| {
+            layout_node = foldWindow(layout_arena.allocator(), root, null) catch null;
+        }
+    }
+
     // Build the full update struct
     const update = StateUpdateJson{
         .gen = generation,
@@ -435,6 +577,7 @@ pub fn sendUpdate() void {
         .disable = if (pending_input_len == 0) true else null,
         .exit = if (pending_exit) true else null,
         .debugoutput = if (pending_debug_count > 0) debug_slices[0..pending_debug_count] else null,
+        .layout = layout_node,
     };
 
     // Serialize with emit_null_optional_fields = false to omit null fields
@@ -1102,4 +1245,147 @@ pub fn sendSpecialInputAndWait(fmode: glui32, usage: glui32) ?[]const u8 {
     }
 
     return null;
+}
+
+// ============== Layout fold tests ==============
+
+test "foldWindow: a lone leaf window folds to a bare leaf node" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var buf = WindowData{ .id = 7, .rock = 0, .win_type = wintype.TextBuffer };
+    const node = try foldWindow(arena.allocator(), &buf, null);
+    try testing.expect(node == .leaf);
+    try testing.expectEqual(@as(u32, 7), node.leaf.window);
+    try testing.expect(node.leaf.size == null);
+}
+
+test "foldWindow: Above/Fixed split -> column, key child (child1) carries the fixed size" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var grid = WindowData{ .id = 2, .rock = 0, .win_type = wintype.TextGrid };
+    var buffer = WindowData{ .id = 3, .rock = 0, .win_type = wintype.TextBuffer };
+    var pair = WindowData{
+        .id = 4,
+        .rock = 0,
+        .win_type = wintype.Pair,
+        .split_method = types.winmethod.Above | types.winmethod.Fixed,
+        .split_size = 1,
+        .split_key = &grid,
+        .child1 = &grid, // Above => new/key window is child1
+        .child2 = &buffer,
+    };
+    const node = try foldWindow(arena.allocator(), &pair, null);
+    try testing.expect(node == .container);
+    const c = node.container;
+    try testing.expectEqual(LayoutDirection.column, c.direction);
+    try testing.expectEqual(@as(usize, 2), c.children.len);
+    try testing.expectEqual(@as(u32, 2), c.children[0].leaf.window);
+    try testing.expectEqual(@as(u32, 1), c.children[0].leaf.size.?.fixed);
+    try testing.expectEqual(@as(u32, 3), c.children[1].leaf.window);
+    try testing.expect(c.children[1].leaf.size == null); // remainder
+}
+
+test "foldWindow: collapses a same-direction unsized chain into one n-ary column" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // status (fixed 1) above [ map (fixed 3) above buffer ]
+    var status = WindowData{ .id = 10, .rock = 0, .win_type = wintype.TextGrid };
+    var map = WindowData{ .id = 11, .rock = 0, .win_type = wintype.TextGrid };
+    var buffer = WindowData{ .id = 12, .rock = 0, .win_type = wintype.TextBuffer };
+    var inner = WindowData{
+        .id = 13,
+        .rock = 0,
+        .win_type = wintype.Pair,
+        .split_method = types.winmethod.Above | types.winmethod.Fixed,
+        .split_size = 3,
+        .split_key = &map,
+        .child1 = &map,
+        .child2 = &buffer,
+    };
+    var outer = WindowData{
+        .id = 14,
+        .rock = 0,
+        .win_type = wintype.Pair,
+        .split_method = types.winmethod.Above | types.winmethod.Fixed,
+        .split_size = 1,
+        .split_key = &status,
+        .child1 = &status,
+        .child2 = &inner, // unsized remainder, same direction -> collapsed
+    };
+    const node = try foldWindow(arena.allocator(), &outer, null);
+    try testing.expect(node == .container);
+    const c = node.container;
+    try testing.expectEqual(LayoutDirection.column, c.direction);
+    try testing.expectEqual(@as(usize, 3), c.children.len);
+    try testing.expectEqual(@as(u32, 10), c.children[0].leaf.window);
+    try testing.expectEqual(@as(u32, 1), c.children[0].leaf.size.?.fixed);
+    try testing.expectEqual(@as(u32, 11), c.children[1].leaf.window);
+    try testing.expectEqual(@as(u32, 3), c.children[1].leaf.size.?.fixed);
+    try testing.expectEqual(@as(u32, 12), c.children[2].leaf.window);
+    try testing.expect(c.children[2].leaf.size == null);
+}
+
+test "foldWindow: differing directions stay nested, not collapsed" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // sidebar (fixed 20 cols, Left) beside [ status above buffer ]
+    var sidebar = WindowData{ .id = 20, .rock = 0, .win_type = wintype.TextGrid };
+    var status = WindowData{ .id = 21, .rock = 0, .win_type = wintype.TextGrid };
+    var buffer = WindowData{ .id = 22, .rock = 0, .win_type = wintype.TextBuffer };
+    var inner = WindowData{
+        .id = 23,
+        .rock = 0,
+        .win_type = wintype.Pair,
+        .split_method = types.winmethod.Above | types.winmethod.Fixed,
+        .split_size = 1,
+        .split_key = &status,
+        .child1 = &status,
+        .child2 = &buffer,
+    };
+    var outer = WindowData{
+        .id = 24,
+        .rock = 0,
+        .win_type = wintype.Pair,
+        .split_method = types.winmethod.Left | types.winmethod.Fixed,
+        .split_size = 20,
+        .split_key = &sidebar,
+        .child1 = &sidebar,
+        .child2 = &inner,
+    };
+    const node = try foldWindow(arena.allocator(), &outer, null);
+    try testing.expect(node == .container);
+    const c = node.container;
+    try testing.expectEqual(LayoutDirection.row, c.direction);
+    try testing.expectEqual(@as(usize, 2), c.children.len);
+    try testing.expectEqual(@as(u32, 20), c.children[0].leaf.window);
+    try testing.expectEqual(@as(u32, 20), c.children[0].leaf.size.?.fixed);
+    // second child is the nested column, unsized
+    try testing.expect(c.children[1] == .container);
+    try testing.expectEqual(LayoutDirection.column, c.children[1].container.direction);
+    try testing.expect(c.children[1].container.size == null);
+    try testing.expectEqual(@as(usize, 2), c.children[1].container.children.len);
+}
+
+test "LayoutNode serializes to the wire shape" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var grid = WindowData{ .id = 2, .rock = 0, .win_type = wintype.TextGrid };
+    var buffer = WindowData{ .id = 3, .rock = 0, .win_type = wintype.TextBuffer };
+    var pair = WindowData{
+        .id = 4,
+        .rock = 0,
+        .win_type = wintype.Pair,
+        .split_method = types.winmethod.Above | types.winmethod.Fixed,
+        .split_size = 1,
+        .split_key = &grid,
+        .child1 = &grid,
+        .child2 = &buffer,
+    };
+    const node = try foldWindow(arena.allocator(), &pair, null);
+    var buf: [512]u8 = undefined;
+    const json = try std.fmt.bufPrint(&buf, "{f}", .{std.json.fmt(node, .{ .emit_null_optional_fields = false })});
+    try testing.expectEqualStrings(
+        "{\"direction\":\"column\",\"children\":[{\"window\":2,\"size\":{\"fixed\":1}},{\"window\":3}]}",
+        json,
+    );
 }

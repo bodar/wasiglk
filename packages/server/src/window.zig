@@ -534,7 +534,7 @@ fn layoutWindow(win: *WindowData, left: f64, top: f64, width: f64, height: f64) 
 }
 
 /// Queue window updates for all non-pair windows
-fn queueAllWindowUpdates() void {
+pub fn queueAllWindowUpdates() void {
     var win = state.window_list;
     while (win) |w| : (win = w.next) {
         // Only send updates for non-pair windows

@@ -11,33 +11,29 @@ test.describe('Story picker', () => {
     // plus zipped-container and Hugo/Scare graphics cases.
     await expect(select.locator('option')).toHaveCount(12);
     await expect(select).toHaveValue('advent.ulx');
-    await expect(page.locator('#output')).toContainText('Welcome to Adventure');
+    await expect(page.locator('.win-buffer')).toContainText('Welcome to Adventure');
   });
 
-  test('switching to a Glulx graphics story renders a graphics canvas', async ({ page }) => {
+  test('switching to a Glulx graphics story renders a graphics window (SVG)', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#status')).toContainText('initialized', { timeout: 15000 });
 
     await page.selectOption('#story', 'graphwintest.gblorb');
     await expect(page.locator('#status')).toContainText('initialized', { timeout: 20000 });
-    await expect(page.locator('#output')).toContainText('GraphWinTest');
+    await expect(page.locator('.win-buffer')).toContainText('GraphWinTest');
 
-    // The graphics window must materialise as a canvas.
-    const canvas = page.locator('canvas');
-    await expect(canvas).toHaveCount(1);
+    // The graphics window materialises as an SVG surface (SvgRenderer).
+    const svg = page.locator('.win-graphics svg');
+    await expect(svg).toHaveCount(1);
 
-    // Draw an image and assert the canvas has non-transparent pixels.
+    // Draw an image; the renderer adds an <image> element resolved from the Blorb.
     await page.locator('#input').fill('image 0');
     await page.locator('#send').click();
     await expect
-      .poll(async () => page.evaluate(() => {
-        const c = document.querySelector('canvas');
-        if (!c) return false;
-        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-        for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return true;
-        return false;
-      }), { timeout: 5000 })
-      .toBe(true);
+      .poll(async () => page.evaluate(() =>
+        document.querySelectorAll('.win-graphics svg image').length
+      ), { timeout: 5000 })
+      .toBeGreaterThan(0);
   });
 
   test('switching to a buffer-image story renders inline images', async ({ page }) => {
@@ -47,7 +43,7 @@ test.describe('Story picker', () => {
     await page.selectOption('#story', 'imagetest.gblorb');
     await expect(page.locator('#status')).toContainText('initialized', { timeout: 20000 });
     // The interpreter must actually support images (no scale-flags refusal).
-    await expect(page.locator('#output')).not.toContainText('does not support');
+    await expect(page.locator('.win-buffer')).not.toContainText('does not support');
 
     await page.locator('#input').fill('image');
     await page.locator('#send').click();
@@ -55,7 +51,7 @@ test.describe('Story picker', () => {
     // Inline images appear as <img> inside the buffer output and load.
     await expect
       .poll(async () => page.evaluate(() => {
-        const imgs = document.querySelectorAll('#output img');
+        const imgs = document.querySelectorAll('.win-buffer img');
         return Array.from(imgs).filter((i) => i.complete && i.naturalWidth > 0).length;
       }), { timeout: 8000 })
       .toBeGreaterThan(0);
@@ -66,7 +62,7 @@ test.describe('Story picker', () => {
   // observer installed before the story loads captures them regardless.
   const installImageObserver = (page) => page.evaluate(() => {
     window.__dataImgs = 0;
-    const out = document.getElementById('output');
+    const out = document.getElementById('game-layout');
     const check = (n) => {
       if (n.nodeType === 1 && n.tagName === 'IMG' && String(n.src).startsWith('data:image/')) window.__dataImgs++;
     };
@@ -87,7 +83,7 @@ test.describe('Story picker', () => {
     // on load.
     await page.selectOption('#story', 'guilty-graphics.zip');
     await expect(page.locator('#status')).toContainText('initialized', { timeout: 30000 });
-    await expect(page.locator('#output')).not.toContainText('does not support');
+    await expect(page.locator('.win-buffer')).not.toContainText('does not support');
 
     await expect
       .poll(async () => page.evaluate(() => window.__dataImgs), { timeout: 15000 })
@@ -104,7 +100,7 @@ test.describe('Story picker', () => {
     // first room draws the image; dismiss the title screen to reach it.
     await page.selectOption('#story', 'paint.taf');
     await expect(page.locator('#status')).toContainText('initialized', { timeout: 30000 });
-    await expect(page.locator('#output')).not.toContainText('does not support');
+    await expect(page.locator('.win-buffer')).not.toContainText('does not support');
 
     // Advance past the intro/title screens (char or line input) to the first room.
     for (let i = 0; i < 3; i++) {
@@ -123,6 +119,6 @@ test.describe('Story picker', () => {
 
     await page.selectOption('#story', 'advent.z5');
     await expect(page.locator('#status')).toContainText('initialized', { timeout: 20000 });
-    await expect(page.locator('#output')).toContainText('Adventure');
+    await expect(page.locator('.win-buffer')).toContainText('Adventure');
   });
 });
