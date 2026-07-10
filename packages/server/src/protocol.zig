@@ -41,6 +41,7 @@ pub const InputEventRaw = struct {
     value: ?std.json.Value = null, // Can be string (line/char/specialresponse) or integer (hyperlink)
     metrics: ?Metrics = null,
     support: ?[]const []const u8 = null, // Features the display supports
+    serverResolvesImages: ?bool = null, // Client can't resolve image numbers itself (no client Blorb)
     partial: ?std.json.Value = null,
     // Mouse event coordinates
     x: ?i32 = null,
@@ -135,7 +136,11 @@ pub const TextSpan = struct {
 // Special content span for images in buffer windows
 pub const ImageSpan = struct {
     special: []const u8 = "image",
-    image: u32,
+    image: ?u32 = null,
+    // Data-URI carrying the image bytes, for stories whose resources the client
+    // cannot resolve from its own Blorb (Hugo/Scare). When present the client
+    // renders it directly; otherwise it resolves `image` against its Blorb copy.
+    url: ?[]const u8 = null,
     alignment: ?[]const u8 = null,
     width: ?u32 = null,
     height: ?u32 = null,
@@ -173,6 +178,9 @@ pub const DrawOp = struct {
     special: []const u8, // "fill", "image", "setcolor"
     color: ?[]const u8 = null, // CSS hex color like "#RRGGBB"
     image: ?u32 = null,
+    // Data-URI with the image bytes, for stories the client can't resolve from
+    // its own Blorb (Hugo/Scare). See ImageSpan.url.
+    url: ?[]const u8 = null,
     alignment: ?[]const u8 = null,
     x: ?i32 = null,
     y: ?i32 = null,
@@ -629,8 +637,11 @@ fn styleToString(style: glui32) []const u8 {
     };
 }
 
-// Send an image content update for buffer windows using paragraph format per GlkOte spec
-pub fn sendImageUpdate(win_id: u32, image: glui32, alignment: glsi32, img_width: glui32, img_height: glui32) void {
+// Send an image content update for buffer windows using paragraph format per
+// GlkOte spec. Exactly one of `image` (client resolves the number from its own
+// Blorb) or `url` (a data-URI the server supplies for stories the client can't
+// resolve) is set; both are valid GlkOte image-span fields.
+pub fn sendImageUpdate(win_id: u32, image: ?glui32, url: ?[]const u8, alignment: glsi32, img_width: glui32, img_height: glui32) void {
     // Flush any pending updates first
     if (pending_content_len > 0 or pending_windows_len > 0 or pending_input_len > 0) {
         sendUpdate();
@@ -639,6 +650,7 @@ pub fn sendImageUpdate(win_id: u32, image: glui32, alignment: glsi32, img_width:
     const alignment_str = alignmentToString(alignment);
     const content = [_]ContentSpan{.{ .image = .{
         .image = image,
+        .url = url,
         .alignment = alignment_str,
         .width = img_width,
         .height = img_height,
@@ -647,9 +659,10 @@ pub fn sendImageUpdate(win_id: u32, image: glui32, alignment: glsi32, img_width:
     sendContentUpdate(.{ .id = win_id, .text = &paragraphs });
 }
 
-// Send a graphics window image update (includes x, y position)
-// Uses "draw" array with "special" as string value per GlkOte spec
-pub fn sendGraphicsImageUpdate(win_id: u32, image: glui32, x: glsi32, y: glsi32, img_width: glui32, img_height: glui32) void {
+// Send a graphics window image update (includes x, y position).
+// Uses "draw" array with "special" as string value per GlkOte spec. See
+// sendImageUpdate for the image/url split.
+pub fn sendGraphicsImageUpdate(win_id: u32, image: ?glui32, url: ?[]const u8, x: glsi32, y: glsi32, img_width: glui32, img_height: glui32) void {
     if (pending_content_len > 0 or pending_windows_len > 0 or pending_input_len > 0) {
         sendUpdate();
     }
@@ -657,6 +670,7 @@ pub fn sendGraphicsImageUpdate(win_id: u32, image: glui32, x: glsi32, y: glsi32,
     const draw_ops = [_]DrawOp{.{
         .special = "image",
         .image = image,
+        .url = url,
         .x = x,
         .y = y,
         .width = img_width,
@@ -901,6 +915,10 @@ pub fn ensureGlkInitialized() void {
                 }
             }
         }
+
+        // Whether the server must deliver image pixels (data-URI) because the
+        // client holds no Blorb to resolve image numbers against.
+        if (event.serverResolvesImages) |v| state.server_resolves_images = v;
 
         // Per RemGLK spec: interpreter responds with "update", not "init"
         // The first sendUpdate() call from the game will serve as the response

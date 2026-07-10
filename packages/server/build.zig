@@ -313,9 +313,20 @@ fn buildHugo(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
 
     exe.addCSourceFiles(.{
         .root = b.path("../hugo/heglk"),
-        .files = &.{ "heglk.c", "heglkunix.c" },
+        .files = &.{"heglkunix.c"},
         .flags = hugo_flags,
     });
+
+    // heglk.c.graphics is the submodule's giblorb-based graphics implementation
+    // (synthesizes a Blorb from Hugo's resource file and draws via glk_image_*),
+    // used instead of the stubbed heglk.c. Zig rejects its non-.c extension, so
+    // copy it to a .c name in the build cache (leaving the submodule untouched);
+    // its quoted #includes resolve via the -I paths added below.
+    const heglk_graphics = b.addWriteFiles().addCopyFile(
+        b.path("../hugo/heglk/heglk.c.graphics"),
+        "heglk_graphics.c",
+    );
+    exe.addCSourceFile(.{ .file = heglk_graphics, .flags = hugo_flags });
 
     addGlkSupport(exe, b, wasi_glk, false);
     exe.addIncludePath(b.path("../hugo/source"));

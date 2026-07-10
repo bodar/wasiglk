@@ -11,6 +11,9 @@ export interface InitEvent {
   gen: number;
   metrics: Metrics;
   support?: string[];  // Features the display supports: 'timer', 'graphics', 'graphicswin', 'hyperlinks'
+  // Set when the display cannot resolve image numbers itself (holds no Blorb):
+  // the server then delivers image bytes as `url` data-URIs. See client.ts.
+  serverResolvesImages?: boolean;
 }
 
 export interface LineInputEvent {
@@ -171,7 +174,10 @@ export interface TextSpan {
  */
 export interface SpecialSpan {
   special: 'image';
-  image: number;
+  // A Blorb image number the display resolves itself, OR omitted when the
+  // server supplies the pixels directly via `url` (Hugo/Scare). At least one is
+  // present.
+  image?: number;
   url?: string;
   alignment?: ImageAlignment;
   width?: number;

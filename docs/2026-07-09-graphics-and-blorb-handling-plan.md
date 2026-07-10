@@ -185,43 +185,79 @@ carrying the image **number** (`graphics.zig` → `protocol.sendGraphicsImageUpd
 
 ---
 
-## Phase 2 — Compile in Hugo and Scare graphics
+## Phase 2 — Compile in Hugo and Scare graphics ✅ DONE
 
-Both interpreters have upstream graphics code that is currently disabled in the
-wasiglk build ("compiled out"). Turn it on.
+Both interpreters had upstream graphics code disabled in the wasiglk build;
+graphics-only (sound left stubbed) now works end-to-end in the browser for both.
 
-### Hugo
+### The unifying insight (delivery)
 
-- Currently `heglk/heglk.c:896-911` stubs graphics: `hugo_hasgraphics()` returns
-  `false`, `hugo_displaypicture()` opens+closes the file and draws nothing.
-- The real media file `hemedia.c` (contains the actual `glk_image_*` calls) is
-  **not** in the hugo source list (`server/build.zig:304-318`).
-- **Steps:** add `hemedia.c` to the build; enable real `hugo_hasgraphics()` /
-  `hugo_displaypicture()`; confirm `GLK_MODULE_IMAGE` support is sufficient
-  (it is defined in `glk.h`).
-- **Open sub-dependency:** Hugo resources may live in a separate resource file
-  (`.hlb`) rather than embedded — if so, this hits the same companion-file gap
-  as Phase 3 (worker writes only `story.ulx`). Verify whether target test games
-  embed resources or use a companion `.hlb`.
+Client-side image resolution (number → pixels from the client's own Blorb copy)
+only works when the **story itself** is a client-parseable Blorb (glulx/z-code).
+Hugo (`.hex` + companion resource file) and Scare (`.taf`) are not — the image
+bytes exist only server-side. So for those, the **server** resolves the bytes and
+ships them as a `data:` URI in the GlkOte-spec `url` field of the image span/draw
+op (the client already had `?? op.url` / `?? span.url` fallbacks). The client
+sends `serverResolvesImages = (this.blorb == null)` in `init`; the server emits
+`url` when set, the image **number** otherwise — glulx/z-code keep the number
+path unchanged (no regtest re-baseline). This is spec-compliant, so stock
+GlkOte/asyncglk displays render Hugo/Scare images too.
 
-### Scare
+### Hugo (build-only)
 
-- Graphics/sound in `garglk/terps/scare/os_glk.c:1789+` are wrapped in
-  `#ifdef GLK_MODULE_GARGLK_FILE_RESOURCES`, which is **not** defined; the
-  `#else` stubs (`os_show_graphic` no-op) compile instead.
-- Scare extracts TAF resources to files and calls `garglk_add_resource_from_file`
-  — a garglk extension the server does not export (`garglk.zig` stubs only
-  `garglk_set_*`).
-- **Steps:** define `GLK_MODULE_GARGLK_FILE_RESOURCES`; implement + export
-  `garglk_add_resource_from_file` server-side; ensure the temp-file extraction
-  path works under the wasi filesystem. More involved than Hugo (needs the
-  garglk file-resource API implemented, not just a source-list add).
+- The submodule already ships `heglk/heglk.c.graphics` — a giblorb-based
+  implementation that synthesizes an in-memory Blorb from Hugo's resource file
+  and calls `giblorb_set_resource_map` (the *same* path glulxe/git use), unused.
+  `build.zig` now compiles it instead of the stubbed `heglk.c` (copied to a `.c`
+  name via `addWriteFiles`, since Zig rejects the odd extension). **No submodule
+  edit, no `-DGARGLK`, no `hemedia.c`** — the plan's original "add `hemedia.c`"
+  was wrong (it's a textual `#include`; would double-define symbols).
 
-**Verification:** a Hugo game with graphics (e.g. a Hugo illustrated game) and a
-Scare `.taf` with images; confirm image draw ops emit.
+### Scare (server API)
 
-> Note: each interpreter is an independent effort; Hugo is lighter (source-list +
-> flag), Scare needs a new server-side garglk resource API.
+- `glk.h` defines `GLK_MODULE_GARGLK_FILE_RESOURCES` + declares
+  `garglk_add_resource_from_file`; `garglk.zig` implements it over a small ad-hoc
+  resource table (`resources.zig`) that reads the requested byte range straight
+  out of the mounted `.taf` (no temp extraction — the plan's assumption was
+  wrong). `graphics.zig`'s `glk_image_*` consult this table when the Blorb map
+  has no such image.
+
+### Filesystem architecture (the real work — see cross-cutting notes)
+
+Hugo was the first interpreter to need general POSIX filesystem behaviour the
+browser worker's simple `/sys` (ro) + `/var` (persist) model skipped:
+1. **Read companions by bare name** (`GBDATA`, alan3 `.a3r`, TADS files). WASI has
+   no cwd syscall and Zig's `std.fs` ignores wasi-libc's userspace cwd, so our
+   Glk file layer resolves relative names against the story dir itself:
+   `state.workdir` (set from `argv[1]`) + `state.resolvePath`, used by every Glk
+   file op (`stream`/`fileref`/`resources`). A real `chdir` is *also* issued for
+   the self-rendering terps that use libc `fopen` directly.
+2. **Create scratch files** (Hugo's synthesized Blorb). The browser WASI shim
+   grants the preopen no create capability (saves only work because the storage
+   provider pre-creates entries). Temp filerefs (`glk_fileref_create_temp`) are
+   therefore backed by an **in-memory growable buffer on the fileref** — modelled
+   as a memory stream, never touching the sandbox fs — which is simply correct
+   for ephemeral scratch.
+
+### Sound — out of scope (follow-up)
+
+`sound.zig` is fully stubbed; Scare/Hugo audio needs a real sound-channel
+implementation + resource delivery. Separate, larger effort.
+
+### Verified
+
+- `resources.zig` inline unit tests (PNG/JPEG mime + dimension sniff, `data:`
+  URI). Zig suite green (61).
+- e2e (`packages/example/tests/picker.spec.js`): Hugo (Guilty Bastards, zipped
+  `.hex`+`GBDATA`) and Scare (Paint!!! `.taf`) each render inline images whose
+  `<img>` src is a server `data:` URI — full pipeline in the real browser. 15 e2e
+  green. Fixtures: `guilty-graphics.zip`, `paint.taf` (freely distributable, IF
+  Archive).
+
+> Note: Hugo turned out lighter than expected (build-only) once the filesystem
+> work landed; Scare needed the new garglk resource API. The filesystem cwd +
+> in-memory-temp work also fixes companion-file delivery generally (the Phase 3
+> follow-up) for every Glk-stream companion interpreter.
 
 ---
 

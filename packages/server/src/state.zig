@@ -80,6 +80,9 @@ pub const StreamData = struct {
     buflen: glui32 = 0,
     bufptr: glui32 = 0,
     is_unicode: bool = false,
+    // In-memory temp file (memory stream over a temp fileref's growable buffer).
+    // Writes past buflen grow the fileref's buffer instead of being dropped.
+    temp_fref: ?*FileRefData = null,
     // Retained array rock for memory buffer (for dispatch layer copy-back)
     buf_rock: DispatchRock = .{ .num = 0 },
     // File stream
@@ -105,6 +108,12 @@ pub const FileRefData = struct {
     textmode: bool,
     // Lazily allocated null-terminated copy for C interop (glkunix_fileref_get_filename)
     filename_cstr: ?[*:0]const u8 = null,
+    // Temp filerefs are backed by an in-memory buffer, not the sandbox
+    // filesystem: scratch data (e.g. Hugo's synthesized Blorb) is ephemeral and
+    // the browser WASI sandbox has no writable scratch. The buffer lives on the
+    // fileref so it survives the write-stream close → read-stream reopen cycle.
+    is_temp: bool = false,
+    temp_buf: ?std.ArrayList(u8) = null,
     // Dispatch rock for Glulxe
     dispatch_rock: DispatchRock = .{ .num = 0 },
     prev: ?*FileRefData = null,
@@ -162,6 +171,15 @@ pub var client_support: struct {
     hyperlinks: bool = false,
 } = .{};
 
+// Whether the client expects the server to resolve image resources to pixels
+// (delivering a `url` data-URI over the wire) rather than resolving image
+// numbers itself from its own Blorb copy. The client sets this when it holds no
+// client-parseable Blorb for the story: glulx/z-code Blorb games send image
+// numbers (client resolves), while Hugo (server-synthesized Blorb) and Scare
+// (garglk file resources) have no client-visible Blorb, so the server must
+// carry the bytes. Defaults false to preserve the number path.
+pub var server_resolves_images: bool = false;
+
 // Timer state (global, not per-window)
 pub var timer_interval: ?glui32 = null; // null = no timer, value = interval in milliseconds
 
@@ -170,5 +188,22 @@ pub var debug_buffer: [4096]u8 = undefined;
 pub var debug_buffer_len: usize = 0;
 pub var debug_stream: ?*StreamData = null;
 
-// Working directory for glkunix
+// Working directory for glkunix — the story's directory. Bare relative paths an
+// interpreter opens through Glk (companion resources: Hugo's resource file,
+// alan3's `.a3r`, TADS files, …) are resolved against this. WASI has no cwd
+// syscall and Zig's std.fs ignores wasi-libc's userspace cwd, so we resolve
+// paths ourselves. (Interpreters that use libc `fopen` directly are covered
+// separately by an actual `chdir` in startup.)
 pub var workdir: ?[]const u8 = null;
+
+/// Resolve a filename an interpreter passed to a Glk file operation to the path
+/// to actually open. Absolute paths and storage-managed `var/` paths (saves,
+/// intercepted by the worker) are used verbatim; other relative names are joined
+/// onto `workdir`. Returns a slice into `buf` when it joins, else the input.
+pub fn resolvePath(buf: []u8, name: []const u8) []const u8 {
+    if (std.fs.path.isAbsolute(name)) return name;
+    if (std.mem.startsWith(u8, name, "var/")) return name;
+    const dir = workdir orelse return name;
+    if (dir.len == 0 or std.mem.eql(u8, dir, ".")) return name;
+    return std.fmt.bufPrint(buf, "{s}/{s}", .{ dir, name }) catch name;
+}

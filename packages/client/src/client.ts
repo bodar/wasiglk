@@ -421,6 +421,11 @@ export class WasiGlkClient {
         args: [this.formatInfo.interpreter, `/sys/${this.storyName}`],
         metrics: this.metrics,
         support: this.support,
+        // When we hold no client-parseable Blorb (Hugo, Scare, and other
+        // non-Blorb stories) we cannot resolve image numbers to pixels, so the
+        // server must deliver image bytes as data-URIs. Blorb stories
+        // (glulx/z-code) keep resolving numbers from our own copy.
+        serverResolvesImages: this.blorb == null,
         storyId: this.storyId,
         filesystem: this.filesystem,
         recordTranscript: this.recordTranscript,

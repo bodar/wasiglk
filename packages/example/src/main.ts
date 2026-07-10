@@ -26,6 +26,8 @@ const STORIES: Story[] = [
   { label: 'Core test — Hugo', file: 'coretest.hex' },
   { label: 'Baton — Scott Adams (scott)', file: 'baton.dat', format: 'scott' },
   { label: 'Adventure — zipped container (glulxe)', file: 'advent-zipped.zip' },
+  { label: 'Guilty Bastards — Hugo graphics (zipped)', file: 'guilty-graphics.zip' },
+  { label: 'Paint!!! — ADRIFT graphics (scare)', file: 'paint.taf', format: 'adrift' },
 ];
 
 // DOM elements
@@ -86,8 +88,8 @@ function drawGraphics(id: number, ops: DrawOperation[]): void {
     } else if (op.special === 'fill') {
       ctx.fillStyle = op.color ?? graphicsColor.get(id) ?? '#000000';
       ctx.fillRect(op.x ?? 0, op.y ?? 0, op.width ?? canvas.width, op.height ?? canvas.height);
-    } else if (op.special === 'image' && op.image !== undefined) {
-      const url = client?.getImageUrl(op.image) ?? op.url;
+    } else if (op.special === 'image') {
+      const url = (op.image !== undefined ? client?.getImageUrl(op.image) : undefined) ?? op.url;
       if (!url) continue;
       const x = op.x ?? 0, y = op.y ?? 0, w = op.width, h = op.height;
       const img = new Image();
@@ -124,7 +126,7 @@ function spanText(span: ContentSpan): string {
 
 // Append an inline image (Glk image drawn into a buffer window) to the output.
 function appendBufferImage(span: Extract<ContentSpan, { special: 'image' }>): void {
-  const url = client?.getImageUrl(span.image) ?? span.url;
+  const url = (span.image !== undefined ? client?.getImageUrl(span.image) : undefined) ?? span.url;
   if (!url) return;
   const img = document.createElement('img');
   img.src = url;

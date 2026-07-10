@@ -186,6 +186,7 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
           gen: 0,
           metrics: msg.metrics,
           support: msg.support ?? ['timer', 'graphics', 'graphicswin', 'hyperlinks'],
+          serverResolvesImages: msg.serverResolvesImages,
         } satisfies InputEvent);
       }
 
@@ -262,7 +263,7 @@ async function runInterpreter(msg: MainToWorkerMessage & { type: 'init' }): Prom
           });
         }
       } catch {
-        console.log('[interpreter]', line);
+        console.debug('[interpreter]', line);
       }
     });
 

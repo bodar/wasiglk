@@ -5,6 +5,7 @@ const types = @import("types.zig");
 const state = @import("state.zig");
 const protocol = @import("protocol.zig");
 const blorb = @import("blorb.zig");
+const resources = @import("resources.zig");
 
 const glui32 = types.glui32;
 const glsi32 = types.glsi32;
@@ -12,73 +13,71 @@ const winid_t = types.winid_t;
 const wintype = types.wintype;
 const WindowData = state.WindowData;
 
-export fn glk_image_get_info(image: glui32, width: ?*glui32, height: ?*glui32) callconv(.c) glui32 {
-    const map = blorb.blorb_map orelse {
-        if (width) |w| w.* = 0;
-        if (height) |h| h.* = 0;
-        return 0;
-    };
+// Resolve an image's natural pixel dimensions from whichever resource map holds
+// it: the Blorb map (glulx/git/fizmo story Blorbs and Hugo's synthesized one)
+// or the garglk file-resource table (Scare). Null if neither knows the image.
+fn imageDims(image: glui32) ?resources.Dims {
+    if (blorb.blorb_map) |map| {
+        var info: blorb.giblorb_image_info_t = undefined;
+        if (blorb.giblorb_load_image_info(map, image, &info) == 0)
+            return .{ .width = info.width, .height = info.height };
+    }
+    return resources.getDims(image);
+}
 
-    var info: blorb.giblorb_image_info_t = undefined;
-    const err = blorb.giblorb_load_image_info(map, image, &info);
-    if (err != 0) {
-        if (width) |w| w.* = 0;
-        if (height) |h| h.* = 0;
-        return 0;
+// Emit an image draw op. When the client can resolve image numbers itself
+// (it holds the story's Blorb) we send the number; otherwise (Hugo/Scare) we
+// ship the pixels inline as a `data:` URI read from the server-side bytes.
+fn emitImageDraw(w: *WindowData, image: glui32, val1: glsi32, val2: glsi32, width: glui32, height: glui32) void {
+    protocol.flushTextBuffer();
+
+    var uri: ?[]u8 = null;
+    defer if (uri) |u| state.allocator.free(u);
+    var image_num: ?glui32 = image;
+
+    if (state.server_resolves_images) {
+        const bytes = blorb.loadImageBytes(image) orelse resources.getBytes(image);
+        if (bytes) |b| {
+            if (resources.dataUri(state.allocator, b)) |u| {
+                uri = u;
+                image_num = null;
+            }
+        }
     }
 
-    if (width) |w| w.* = info.width;
-    if (height) |h| h.* = info.height;
-    return 1;
+    // Buffer windows: val1 is alignment, val2 unused. Graphics: val1=x, val2=y.
+    if (w.win_type == wintype.TextBuffer) {
+        protocol.sendImageUpdate(w.id, image_num, uri, val1, width, height);
+    } else if (w.win_type == wintype.Graphics) {
+        protocol.sendGraphicsImageUpdate(w.id, image_num, uri, val1, val2, width, height);
+    }
+}
+
+export fn glk_image_get_info(image: glui32, width: ?*glui32, height: ?*glui32) callconv(.c) glui32 {
+    if (imageDims(image)) |d| {
+        if (width) |w| w.* = d.width;
+        if (height) |h| h.* = d.height;
+        return 1;
+    }
+    if (width) |w| w.* = 0;
+    if (height) |h| h.* = 0;
+    return 0;
 }
 
 export fn glk_image_draw(win: winid_t, image: glui32, val1: glsi32, val2: glsi32) callconv(.c) glui32 {
-    const w: ?*WindowData = @ptrCast(@alignCast(win));
-    if (w == null) return 0;
+    const w: *WindowData = @ptrCast(@alignCast(win orelse return 0));
 
-    const map = blorb.blorb_map orelse return 0;
-
-    // Get image info from Blorb
-    var info: blorb.giblorb_image_info_t = undefined;
-    const err = blorb.giblorb_load_image_info(map, image, &info);
-    if (err != 0) return 0;
-
-    // Flush any pending text
-    protocol.flushTextBuffer();
-
-    // For text buffer windows, val1 is alignment, val2 is unused
-    // For graphics windows, val1 is x, val2 is y
-    if (w.?.win_type == wintype.TextBuffer) {
-        protocol.sendImageUpdate(w.?.id, image, val1, info.width, info.height);
-    } else if (w.?.win_type == wintype.Graphics) {
-        // Graphics window: val1=x, val2=y
-        protocol.sendGraphicsImageUpdate(w.?.id, image, val1, val2, info.width, info.height);
-    }
-
+    const dims = imageDims(image) orelse return 0;
+    emitImageDraw(w, image, val1, val2, dims.width, dims.height);
     return 1;
 }
 
 export fn glk_image_draw_scaled(win: winid_t, image: glui32, val1: glsi32, val2: glsi32, width: glui32, height: glui32) callconv(.c) glui32 {
-    const w: ?*WindowData = @ptrCast(@alignCast(win));
-    if (w == null) return 0;
+    const w: *WindowData = @ptrCast(@alignCast(win orelse return 0));
 
-    const map = blorb.blorb_map orelse return 0;
-
-    // Verify image exists
-    var info: blorb.giblorb_image_info_t = undefined;
-    const err = blorb.giblorb_load_image_info(map, image, &info);
-    if (err != 0) return 0;
-
-    // Flush any pending text
-    protocol.flushTextBuffer();
-
-    // Use provided dimensions instead of actual image size
-    if (w.?.win_type == wintype.TextBuffer) {
-        protocol.sendImageUpdate(w.?.id, image, val1, width, height);
-    } else if (w.?.win_type == wintype.Graphics) {
-        protocol.sendGraphicsImageUpdate(w.?.id, image, val1, val2, width, height);
-    }
-
+    // Verify the image exists; draw at the caller's requested size.
+    if (imageDims(image) == null) return 0;
+    emitImageDraw(w, image, val1, val2, width, height);
     return 1;
 }
 

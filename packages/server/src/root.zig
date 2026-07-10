@@ -51,5 +51,6 @@ comptime {
     _ = @import("dispatch.zig");
     _ = @import("blorb.zig");
     _ = @import("garglk.zig");
+    _ = @import("resources.zig");
     _ = @import("startup.zig");
 }

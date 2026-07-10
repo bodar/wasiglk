@@ -29,6 +29,10 @@ typedef int32_t glsi32;
 #define GLK_MODULE_HYPERLINKS
 #define GLK_MODULE_DATETIME
 #define GLK_MODULE_RESOURCE_STREAM
+/* Garglk extension: interpreters (Scare) register image/sound byte-ranges of
+ * their own story file as resources, resolved by the server (see resources.zig
+ * / garglk_add_resource_from_file below). */
+#define GLK_MODULE_GARGLK_FILE_RESOURCES
 
 /* Function attribute for functions that never return */
 #if defined(__GNUC__) || defined(__clang__)
@@ -430,5 +434,12 @@ extern void garglk_set_program_name(const char *name);
 extern void garglk_set_program_info(const char *info);
 extern void garglk_set_story_name(const char *name);
 extern void garglk_set_story_title(const char *title);
+
+#ifdef GLK_MODULE_GARGLK_FILE_RESOURCES
+/* Register a byte-range of a file (usually the story itself) as a resource,
+ * returning a nonzero id usable with glk_image_draw / glk_schannel_play. */
+extern glui32 garglk_add_resource_from_file(glui32 usage, const char *filename,
+    glui32 offset, glui32 len);
+#endif /* GLK_MODULE_GARGLK_FILE_RESOURCES */
 
 #endif /* GLK_H */

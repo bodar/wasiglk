@@ -27,6 +27,8 @@ export fn glk_fileref_create_temp(usage: glui32, rock: glui32) callconv(.c) fref
         .filename = filename_copy,
         .usage = usage,
         .textmode = (usage & fileusage.TextMode) != 0,
+        .is_temp = true,
+        .temp_buf = .{},
     };
     state.fileref_id_counter += 1;
 
@@ -135,6 +137,7 @@ pub export fn glk_fileref_destroy(fref_opaque: frefid_t) callconv(.c) void {
         const slice: [:0]const u8 = std.mem.span(cstr);
         allocator.free(slice);
     }
+    if (f.temp_buf) |*b| b.deinit(allocator);
     allocator.free(f.filename);
     allocator.destroy(f);
 }
@@ -162,13 +165,27 @@ export fn glk_fileref_get_rock(fref_opaque: frefid_t) callconv(.c) glui32 {
 export fn glk_fileref_delete_file(fref_opaque: frefid_t) callconv(.c) void {
     const fref: ?*FileRefData = @ptrCast(@alignCast(fref_opaque));
     if (fref == null) return;
-    std.fs.cwd().deleteFile(fref.?.filename) catch return;
+    const f = fref.?;
+    if (f.is_temp) {
+        if (f.temp_buf) |*b| b.clearRetainingCapacity();
+        return;
+    }
+    var pathbuf: [1024]u8 = undefined;
+    const path = state.resolvePath(&pathbuf, f.filename);
+    std.fs.cwd().deleteFile(path) catch return;
 }
 
 export fn glk_fileref_does_file_exist(fref_opaque: frefid_t) callconv(.c) glui32 {
     const fref: ?*FileRefData = @ptrCast(@alignCast(fref_opaque));
     if (fref == null) return 0;
-    _ = std.fs.cwd().statFile(fref.?.filename) catch return 0;
+    const f = fref.?;
+    if (f.is_temp) {
+        const b = f.temp_buf orelse return 0;
+        return if (b.items.len > 0) 1 else 0;
+    }
+    var pathbuf: [1024]u8 = undefined;
+    const path = state.resolvePath(&pathbuf, f.filename);
+    _ = std.fs.cwd().statFile(path) catch return 0;
     return 1;
 }
 

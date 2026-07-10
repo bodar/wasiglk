@@ -29,14 +29,46 @@ pub export fn glk_stream_open_file(fref_opaque: frefid_t, fmode: glui32, rock: g
     const readable = (fmode == filemode.Read or fmode == filemode.ReadWrite);
     const writable = (fmode != filemode.Read);
 
+    // Temp filerefs are backed by an in-memory buffer on the fileref, not the
+    // sandbox filesystem. Model as a memory stream over that buffer; writes grow
+    // it (see putCharUniToStream). Write mode (not read) truncates, matching Glk.
+    if (f.is_temp) {
+        if (f.temp_buf == null) f.temp_buf = .{};
+        const tb = &f.temp_buf.?;
+        if (writable and !readable) tb.clearRetainingCapacity();
+        const stream = allocator.create(StreamData) catch return null;
+        stream.* = StreamData{
+            .id = state.stream_id_counter,
+            .rock = rock,
+            .stream_type = .memory,
+            .readable = readable,
+            .writable = writable,
+            .buf = if (tb.items.len > 0) tb.items.ptr else null,
+            .buflen = @intCast(tb.items.len),
+            .temp_fref = f,
+        };
+        state.stream_id_counter += 1;
+        stream.next = state.stream_list;
+        if (state.stream_list) |list| list.prev = stream;
+        state.stream_list = stream;
+        if (dispatch.object_register_fn) |register_fn| {
+            stream.dispatch_rock = register_fn(@ptrCast(stream), dispatch.gidisp_Class_Stream);
+        }
+        return @ptrCast(stream);
+    }
+
     const flags: std.fs.File.OpenFlags = .{
         .mode = if (readable and writable) .read_write else if (writable) .write_only else .read_only,
     };
 
-    const file = std.fs.cwd().openFile(f.filename, flags) catch |err| {
+    // Resolve companion/relative names against the story directory (our cwd).
+    var pathbuf: [1024]u8 = undefined;
+    const path = state.resolvePath(&pathbuf, f.filename);
+
+    const file = std.fs.cwd().openFile(path, flags) catch |err| {
         if (err == error.FileNotFound and writable) {
             // Create file for writing
-            const new_file = std.fs.cwd().createFile(f.filename, .{ .read = readable }) catch return null;
+            const new_file = std.fs.cwd().createFile(path, .{ .read = readable }) catch return null;
             const stream = allocator.create(StreamData) catch {
                 new_file.close();
                 return null;
@@ -218,8 +250,10 @@ pub export fn glk_stream_close(str_opaque: strid_t, result: ?*stream_result_t) c
 
     if (state.current_stream == s) state.current_stream = null;
 
-    // Unregister memory buffer from retained registry (must be before object unregister)
-    if (s.stream_type == .memory) {
+    // Unregister memory buffer from retained registry (must be before object
+    // unregister). Temp streams own no caller buffer (backed by the fileref's
+    // in-memory buffer), so skip them.
+    if (s.stream_type == .memory and s.temp_fref == null) {
         if (dispatch.retained_unregister_fn) |unregister_fn| {
             if (s.is_unicode) {
                 if (s.buf_uni) |buf| {
@@ -369,7 +403,22 @@ pub fn putCharUniToStream(str: ?*StreamData, ch: glui32) void {
             }
         },
         .memory => {
-            if (s.is_unicode) {
+            if (s.temp_fref) |f| {
+                // Growable in-memory temp file: append past the end instead of
+                // dropping. Buffer lives on the fileref; keep the stream's view
+                // in sync in case appends reallocate it.
+                const tb = &f.temp_buf.?;
+                const byte: u8 = if (ch < 256) @intCast(ch) else '?';
+                while (tb.items.len < s.bufptr) tb.append(state.allocator, 0) catch return;
+                if (s.bufptr < tb.items.len) {
+                    tb.items[s.bufptr] = byte;
+                } else {
+                    tb.append(state.allocator, byte) catch return;
+                }
+                s.bufptr += 1;
+                s.buf = tb.items.ptr;
+                s.buflen = @intCast(tb.items.len);
+            } else if (s.is_unicode) {
                 if (s.buf_uni) |buf| {
                     if (s.bufptr < s.buflen) {
                         buf[s.bufptr] = ch;
