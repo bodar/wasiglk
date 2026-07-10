@@ -256,8 +256,10 @@ running the existing format detector over the container's entries.
 
 ### What shipped
 - **`packages/client/src/container.ts`** — `isZip`, `unzipEntries` (flatten to
-  basenames, drop dir/traversal entries), `pickPrimary` (detect the story entry
-  among companions; `ClientConfig.format` override; largest-file fallback). Uses
+  basenames, drop dir/traversal entries, dedupe colliding basenames first-wins so
+  the client's primary pick and the worker's `/sys` build from one identical set),
+  `pickPrimary` (detect the story entry among companions; `ClientConfig.format`
+  override; largest-file fallback). Uses
   **fflate** (MIT, ~3KB gz) — the one small dependency, chosen over a Zig
   `unzip.wasm` (measured ~32KB / ~14.5KB gz, zero-dep) purely for ~85 fewer lines
   and no build artifact.
@@ -277,7 +279,7 @@ running the existing format detector over the container's entries.
 ### Verified
 - `packages/client/test/container.test.ts` — zip sniff, basename flattening,
   primary selection (alan3 `.acd`+`.a3r`, content detection, override, fallback,
-  empty). 63 client unit tests green.
+  empty), basename-collision dedupe. 64 client unit tests green.
 - `packages/example/tests/container.spec.js` — full client → worker → glulxe run
   over a zipped `advent.ulx` (`advent-zipped.zip` fixture + demo picker entry):
   "Welcome to Adventure" renders and input advances moves. All 13 e2e green.
