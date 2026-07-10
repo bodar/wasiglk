@@ -7,7 +7,7 @@
   - `./run build` - Build all interpreters
   - `./run test` - Run tests
   - `./run serve` or `./run demo` - Start dev server on port 3000 (check if already running first)
-  - `./run typecheck` - Type check TypeScript
+  - `./run check` - Type check TypeScript
 
 ## Submodules
 
@@ -32,6 +32,27 @@
 
 - **Zig and C code should have inline unit tests** where reasonably possible (pure logic, mappings, conversions)
 - Run Zig tests with `./run testZig`; they also run as part of `./run test` and `./run ci`
+
+## Documentation
+
+- **Research and plan markdown lives in `docs/`** — not the repo root. (Only
+  `README.md` and `CLAUDE.md` stay at the root; vendored/submodule/package
+  READMEs stay where they are.)
+- **Filename**: `YYYY-MM-DD-slug-<type>.md`, date-prefixed, kebab-case, where
+  `<type>` is `plan` or `research` (e.g. `2026-07-09-graphics-and-blorb-handling-plan.md`).
+  The date is when the document was first written.
+- **Frontmatter** (YAML) on every such file, matching the talebrary docs format:
+  ```yaml
+  ---
+  title: "Human-readable title"
+  date: YYYY-MM-DD
+  author: Daniel Bodart
+  type: plan | research
+  status: in-progress | complete | superseded | blocked
+  tags: [kebab, topic, tags]
+  ---
+  ```
+- Keep `status` current as work lands (`in-progress` → `complete`, etc.).
 
 ## Browser Automation
 

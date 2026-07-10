@@ -1,3 +1,12 @@
+---
+title: "Transcript Recording (.glktra)"
+date: 2026-07-04
+author: Daniel Bodart
+type: plan
+status: complete
+tags: [plan, transcript, glktra, replay, recording, glkote]
+---
+
 # Transcript Recording (`.glktra`)
 
 **Status:** design, approved — not yet implemented.

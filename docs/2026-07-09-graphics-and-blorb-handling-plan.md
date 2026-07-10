@@ -1,3 +1,12 @@
+---
+title: "Graphics & Blorb Handling Plan"
+date: 2026-07-09
+author: Daniel Bodart
+type: plan
+status: in-progress
+tags: [plan, graphics, blorb, images, metrics, layout, interpreters]
+---
+
 # Graphics & Blorb Handling Plan
 
 Make image/graphics support work correctly and uniformly across every wasiglk

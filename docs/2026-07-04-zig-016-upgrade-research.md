@@ -1,3 +1,12 @@
+---
+title: "Zig 0.16 Upgrade — Discovery Notes"
+date: 2026-07-04
+author: Daniel Bodart
+type: research
+status: blocked
+tags: [research, zig, toolchain, wasi-sdk, setjmp, blocked]
+---
+
 # Zig 0.16 Upgrade — Discovery Notes
 
 Status: **Attempted, then reverted to zig 0.15.2.** Blocked by a zig 0.16.0 +

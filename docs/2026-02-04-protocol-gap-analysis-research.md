@@ -1,3 +1,12 @@
+---
+title: "Protocol Gap Analysis: wasiglk vs RemGlk/GlkOte"
+date: 2026-02-04
+author: Daniel Bodart
+type: research
+status: in-progress
+tags: [research, protocol, remglk, glkote, spec, compliance]
+---
+
 # Protocol Gap Analysis: wasiglk vs RemGLK/GlkOte Specification
 
 This document tracks discrepancies between wasiglk's implementation and the official RemGLK/GlkOte JSON protocol specification. Use this as a checklist when fixing issues.
